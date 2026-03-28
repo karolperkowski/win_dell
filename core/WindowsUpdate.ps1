@@ -103,12 +103,12 @@ function Install-PendingUpdates {
     #>
     param([array]$UpdateList)
 
-    if ($UpdateList.Count -eq 0) {
+    if (@($UpdateList).Count -eq 0) {
         Write-LogInfo 'No updates to install.'
         return $false
     }
 
-    Write-LogInfo "Installing $($UpdateList.Count) update(s)..."
+    Write-LogInfo "Installing $(@($UpdateList).Count) update(s)..."
     foreach ($u in $UpdateList) {
         Write-LogInfo "  -> $($u.KB) : $($u.Title)"
     }
@@ -123,7 +123,7 @@ function Install-PendingUpdates {
 
         $rebootRequired = $result | Where-Object { $_.RebootRequired -eq $true }
         if ($rebootRequired) {
-            Write-LogInfo "$(($rebootRequired | Measure-Object).Count) update(s) require a reboot."
+            Write-LogInfo "$((@($rebootRequired) | Measure-Object).Count) update(s) require a reboot."
             return $true
         }
         return $false
@@ -154,7 +154,7 @@ function Test-RebootPending {
     $cbsKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
     if (Test-Path $cbsKey) { $reasons += 'CBS RebootPending' }
 
-    if ($reasons.Count -gt 0) {
+    if (@($reasons).Count -gt 0) {
         Write-LogInfo "Reboot pending detected via: $($reasons -join ', ')"
         return $true
     }
@@ -214,9 +214,9 @@ try {
 
     # Step 3 - Query pending updates
     $pending = Get-PendingUpdateList
-    Write-LogInfo "Pending updates found: $($pending.Count)"
+    Write-LogInfo "Pending updates found: $(@($pending).Count)"
 
-    if ($pending.Count -eq 0) {
+    if (@($pending).Count -eq 0) {
         # Verify with the registry as well
         if (Test-RebootPending) {
             Write-LogInfo 'No new updates but system reboot is still pending from a previous cycle.'
@@ -234,21 +234,21 @@ try {
     $rebootNeeded = Install-PendingUpdates -UpdateList $pending
     $newCycle     = Increment-UpdateCycleCount
 
-    Write-LogInfo "Installed $($pending.Count) update(s). Reboot needed: $rebootNeeded"
+    Write-LogInfo "Installed $(@($pending).Count) update(s). Reboot needed: $rebootNeeded"
 
     if ($rebootNeeded -or (Test-RebootPending)) {
         Write-LogInfo "Reboot required after update cycle $newCycle."
         Close-Logger -FinalStatus 'SUCCESS'
-        return @{ Status = 'RebootRequired'; Message = "Reboot required after installing $($pending.Count) update(s). Cycle: $newCycle." }
+        return @{ Status = 'RebootRequired'; Message = "Reboot required after installing $(@($pending).Count) update(s). Cycle: $newCycle." }
     }
 
     # No reboot needed - check if more updates appeared (chained updates)
     $nextPending = Get-PendingUpdateList
-    if ($nextPending.Count -gt 0) {
-        Write-LogInfo "$($nextPending.Count) additional update(s) found after first pass - will handle on next orchestrator run."
+    if (@($nextPending).Count -gt 0) {
+        Write-LogInfo "$(@($nextPending).Count) additional update(s) found after first pass - will handle on next orchestrator run."
         Close-Logger -FinalStatus 'SUCCESS'
         # Don't mark stage complete - orchestrator will re-run it
-        return @{ Status = 'RebootRequired'; Message = "More updates found: $($nextPending.Count) - re-running." }
+        return @{ Status = 'RebootRequired'; Message = "More updates found: $(@($nextPending).Count) - re-running." }
     }
 
     Write-LogSuccess 'Windows Update complete - no reboot required, no further updates pending.'

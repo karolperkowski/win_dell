@@ -47,7 +47,7 @@ function Write-CompletionReport {
         $lines += "    {0,-32} {1}" -f $_.Stage, $_.Status
     }
 
-    if ($state['FailedStages'] -and $state['FailedStages'].Count -gt 0) {
+    if ($state['FailedStages'] -and @($state['FailedStages']).Count -gt 0) {
         $lines += ''
         $lines += '  Stages with errors (check logs):'
         foreach ($s in $state['FailedStages']) {

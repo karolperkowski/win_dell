@@ -252,7 +252,7 @@ function Set-StageComplete {
 
         # Advance current stage pointer
         $idx = $Script:STAGE_ORDER.IndexOf($StageName)
-        if ($idx -ge 0 -and $idx -lt ($Script:STAGE_ORDER.Count - 1)) {
+        if ($idx -ge 0 -and $idx -lt (@($Script:STAGE_ORDER).Count - 1)) {
             $state['CurrentStage'] = $Script:STAGE_ORDER[$idx + 1]
         }
 

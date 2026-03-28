@@ -188,7 +188,7 @@ $missing = $requiredFiles | Where-Object {
     -not (Test-Path (Join-Path $REPO_DIR $_))
 }
 
-if ($missing.Count -gt 0) {
+if (@($missing).Count -gt 0) {
     Write-InstallLog 'Repo integrity check FAILED. Missing files:' ERROR
     $missing | ForEach-Object { Write-InstallLog "  - $_" ERROR }
     throw "Repo download appears incomplete. Re-run install.ps1 after deleting '$REPO_DIR'."

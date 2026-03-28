@@ -222,8 +222,8 @@ try {
         $true
     } else { $false }
 
-    Write-LogInfo "Safe-to-remove apps:    $($lists.Safe.Count)"
-    Write-LogInfo "Optional-removal apps:  $($lists.Optional.Count)"
+    Write-LogInfo "Safe-to-remove apps:    $(@($lists.Safe).Count)"
+    Write-LogInfo "Optional-removal apps:  $(@($lists.Optional).Count)"
     Write-LogInfo "Remove optional:        $removeOptional"
 
     # Pass 1: Safe removals
