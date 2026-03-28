@@ -13,6 +13,10 @@
       "ContinueOnError": true,
       "RemoveOptional": false
     },
+    "WinTweaks": {
+      "ContinueOnError": true,
+      "RunWinUtil": true
+    },
     "InstallDellSupportAssist": {
       "ContinueOnError": true
     },

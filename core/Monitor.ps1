@@ -26,7 +26,7 @@ $REFRESH_MS  = 3000
 $CLOSE_DELAY = 30
 
 $STAGE_ORDER = @(
-    'WindowsUpdate','PowerSettings','Debloat',
+    'WindowsUpdate','PowerSettings','Debloat','WinTweaks',
     'InstallDellSupportAssist','InstallDellPowerManager',
     'InstallTailscale','Cleanup'
 )
@@ -34,6 +34,7 @@ $STAGE_LABELS = @{
     WindowsUpdate            = 'Windows Update'
     PowerSettings            = 'Power Settings'
     Debloat                  = 'Debloat'
+    WinTweaks                = 'Windows Tweaks'
     InstallDellSupportAssist = 'Dell SupportAssist'
     InstallDellPowerManager  = 'Dell Power Manager'
     InstallTailscale         = 'Tailscale'
@@ -42,6 +43,15 @@ $STAGE_LABELS = @{
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
+
+# Keep display and system awake for the entire duration the monitor is open.
+# ES_CONTINUOUS(0x80000000) | ES_DISPLAY_REQUIRED(0x00000002) | ES_SYSTEM_REQUIRED(0x00000001)
+# Windows automatically reverts when this process exits.
+try {
+    Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);' `
+             -Name 'SleepGuard' -Namespace 'WinDeploy' -ErrorAction Stop
+    [WinDeploy.SleepGuard]::SetThreadExecutionState(0x80000003) | Out-Null
+} catch { <# non-fatal - deployment continues #> }
 
 # ---------------------------------------------------------------------------
 # XAML

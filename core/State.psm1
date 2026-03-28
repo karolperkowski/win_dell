@@ -45,6 +45,7 @@ $Script:STAGE_ORDER = @(
     'WindowsUpdate'
     'PowerSettings'
     'Debloat'
+    'WinTweaks'
     'InstallDellSupportAssist'
     'InstallDellPowerManager'
     'InstallTailscale'
