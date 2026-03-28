@@ -47,6 +47,7 @@ $Script:STAGE_ORDER = @(
     'Debloat'
     'InstallDellSupportAssist'
     'InstallDellPowerManager'
+    'InstallTailscale'
     'Cleanup'
 )
 

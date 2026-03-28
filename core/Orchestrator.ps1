@@ -43,6 +43,7 @@ $Script:STAGE_SCRIPTS = [ordered]@{
     Debloat                  = Join-Path $Script:CoreDir 'Debloat.ps1'
     InstallDellSupportAssist = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallDellPowerManager  = Join-Path $Script:CoreDir 'AppInstall.ps1'
+    InstallTailscale         = Join-Path $Script:CoreDir 'Tailscale.ps1'
     Cleanup                  = Join-Path $Script:CoreDir 'Cleanup.ps1'
 }
 

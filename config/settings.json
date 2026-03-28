@@ -19,6 +19,9 @@
     "InstallDellPowerManager": {
       "ContinueOnError": true
     },
+    "InstallTailscale": {
+      "ContinueOnError": false
+    },
     "Cleanup": {
       "FinalReboot": true
     }
@@ -78,6 +81,15 @@
 
   },
 
-  "_comment_Overrides": "Per-machine overrides go below. These merge on top of the above at runtime.",
+  "Tailscale": {
+    "_comment_AuthKey": "Set a pre-auth key from tailscale.com/settings/keys to skip the QR flow entirely.",
+    "AuthKey": "",
+    "QrTimeoutMinutes": 30,
+    "AcceptRoutes": false,
+    "AcceptDNS": true,
+    "_comment_Hostname": "Leave blank to use the Windows computer name.",
+    "Hostname": ""
+  },
+
   "Overrides": {}
 }
