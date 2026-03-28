@@ -109,7 +109,7 @@ function Test-AppInstalled {
         'Registry' {
             return Test-AppInstalledByRegistry `
                 -DisplayName $detect['DisplayName'] `
-                -MinVersion  ($detect['MinVersion'] ?? '')
+                -MinVersion  (if ($detect['MinVersion']) { $detect['MinVersion'] } else { '' })
         }
         'File' {
             return Test-AppInstalledByFile -FilePath $detect['FilePath']
@@ -223,7 +223,7 @@ function Install-App {
 
     $displayName = $AppDef['DisplayName']
     $type        = $AppDef['InstallerType']   # EXE | MSI | MSIX
-    $silentArgs  = $AppDef['SilentArgs'] ?? ''
+    $silentArgs  = if ($AppDef['SilentArgs']) { $AppDef['SilentArgs'] } else { '' }
     $successCodes = if ($AppDef['SuccessExitCodes']) {
         @($AppDef['SuccessExitCodes'])
     } else { @(0) }
@@ -274,7 +274,7 @@ try {
         return @{ Status = 'Complete'; Message = "No app definition for $StageName." }
     }
 
-    $displayName = $appDef['DisplayName'] ?? $StageName
+    $displayName = if ($appDef['DisplayName']) { $appDef['DisplayName'] } else { $StageName }
     Write-LogInfo "Target application: $displayName"
 
     # Detection: skip if already installed
