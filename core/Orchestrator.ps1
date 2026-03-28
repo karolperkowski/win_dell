@@ -31,8 +31,8 @@ $Script:CoreDir   = $PSScriptRoot
 $Script:TASK_NAME = 'WinDeploy-Resume'
 
 # Import shared modules
-Import-Module (Join-Path $Script:CoreDir 'State.psm1')   -Force
-Import-Module (Join-Path $Script:CoreDir 'Logging.psm1') -Force
+Import-Module (Join-Path $Script:CoreDir 'State.psm1')   -DisableNameChecking -Force
+Import-Module (Join-Path $Script:CoreDir 'Logging.psm1') -DisableNameChecking -Force
 
 # ---------------------------------------------------------------------------
 # Stage map: stage name -> script file in /core
@@ -111,7 +111,7 @@ function Disable-AutoLogon {
 function Invoke-RebootWithReason {
     param([string]$Reason, [int]$DelaySeconds = 15)
 
-    Increment-RebootCount
+    Add-RebootCount
     $state = Get-DeployState
     Write-LogInfo "Rebooting (reboot #$($state.RebootCount)). Reason: $Reason"
     Write-LogInfo "System will restart in $DelaySeconds seconds..."

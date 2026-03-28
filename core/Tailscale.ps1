@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $ConfirmPreference     = 'None'
 
 $coreDir = $PSScriptRoot
-Import-Module (Join-Path $coreDir 'Logging.psm1') -Force
+Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
 Initialize-Logger -Stage $StageName
 
 # ---------------------------------------------------------------------------

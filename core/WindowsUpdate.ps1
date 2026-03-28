@@ -36,8 +36,8 @@ $ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unatt
 # Import shared modules
 # ---------------------------------------------------------------------------
 $coreDir = $PSScriptRoot
-Import-Module (Join-Path $coreDir 'Logging.psm1') -Force
-Import-Module (Join-Path $coreDir 'State.psm1')   -Force
+Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
+Import-Module (Join-Path $coreDir 'State.psm1')   -DisableNameChecking -Force
 
 Initialize-Logger -Stage $StageName
 

@@ -375,7 +375,7 @@ function Write-StateError {
     }
 }
 
-function Increment-RebootCount {
+function Add-RebootCount {
     <#
     .SYNOPSIS
         Increments the reboot counter. Called by the orchestrator before
@@ -459,7 +459,7 @@ Export-ModuleMember -Function @(
     'Set-DeployComplete'
     'Test-DeployComplete'
     'Write-StateError'
-    'Increment-RebootCount'
+    'Add-RebootCount'
     'Get-StageStatus'
     'Reset-DeployState'
 )
