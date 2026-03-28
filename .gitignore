@@ -1,0 +1,10 @@
+# Installer binaries - too large for git; manage separately
+apps/*.exe
+apps/*.msi
+apps/*.msix
+
+# Runtime log output - never commit these
+logs/
+
+# State file - machine-specific, never commit
+state.json

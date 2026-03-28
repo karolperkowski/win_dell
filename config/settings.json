@@ -1,0 +1,83 @@
+{
+  "_comment": "WinDeploy settings.json - Edit this file to customise your deployment.",
+
+  "Stages": {
+    "WindowsUpdate": {
+      "ContinueOnError": false,
+      "MaxCycles": 5
+    },
+    "PowerSettings": {
+      "ContinueOnError": false
+    },
+    "Debloat": {
+      "ContinueOnError": true,
+      "RemoveOptional": false
+    },
+    "InstallDellSupportAssist": {
+      "ContinueOnError": true
+    },
+    "InstallDellPowerManager": {
+      "ContinueOnError": true
+    },
+    "Cleanup": {
+      "FinalReboot": true
+    }
+  },
+
+  "Debloat": {
+    "RemoveOptional": false
+  },
+
+  "Apps": {
+
+    "InstallDellSupportAssist": {
+      "DisplayName": "Dell SupportAssist",
+
+      "_comment_LocalPath": "Path relative to /apps folder, or an absolute path. Checked first.",
+      "LocalPath": "DellSupportAssistInstaller.exe",
+
+      "_comment_DownloadUrl": "Used as fallback if LocalPath is absent or missing.",
+      "DownloadUrl": "https://dl.dell.com/FOLDER12345678M/1/Dell-SupportAssist-for-Home-PCs_3.x.x_Setup.exe",
+
+      "_comment_InstallerType": "EXE | MSI | MSIX",
+      "InstallerType": "EXE",
+
+      "_comment_SilentArgs": "See Dell SupportAssist admin guide for current flags.",
+      "SilentArgs": "/s /v\"/qn /norestart\"",
+
+      "_comment_SuccessExitCodes": "0 = success, 3010 = success + reboot required",
+      "SuccessExitCodes": [0, 3010],
+
+      "Detection": {
+        "_comment": "Method: Registry | File | Service",
+        "Method": "Registry",
+        "DisplayName": "Dell SupportAssist",
+        "MinVersion": "3.0.0"
+      }
+    },
+
+    "InstallDellPowerManager": {
+      "DisplayName": "Dell Power Manager",
+
+      "LocalPath": "DellPowerManagerInstaller.exe",
+      "DownloadUrl": "https://dl.dell.com/FOLDER00000000M/1/Dell-Power-Manager_x.x.x_Setup.exe",
+
+      "InstallerType": "EXE",
+
+      "_comment_SilentArgs_PM": "Dell Power Manager uses standard NSIS or InnoSetup flags.",
+      "SilentArgs": "/S /v/qn",
+
+      "SuccessExitCodes": [0, 3010],
+
+      "Detection": {
+        "Method": "Registry",
+        "DisplayName": "Dell Power Manager",
+        "MinVersion": "3.0.0"
+      }
+    }
+
+  },
+
+  "_comment_Overrides": "Per-machine overrides go below. These merge on top of the above at runtime.",
+  "Overrides": {}
+}

@@ -1,0 +1,80 @@
+{
+  "_comment": "WinDeploy bloatware.json - edit lists to match your environment.",
+
+  "_comment_SafeToRemove": [
+    "These apps are safe to remove on any managed Windows deployment.",
+    "They will not break core OS functionality.",
+    "Names are partial matches - 'Microsoft.BingWeather' matches that exact package."
+  ],
+  "SafeToRemove": [
+    "Microsoft.BingWeather",
+    "Microsoft.BingNews",
+    "Microsoft.BingFinance",
+    "Microsoft.BingSports",
+    "Microsoft.BingTranslator",
+    "Microsoft.GetHelp",
+    "Microsoft.Getstarted",
+    "Microsoft.Microsoft3DViewer",
+    "Microsoft.MixedReality.Portal",
+    "Microsoft.MSPaint",
+    "Microsoft.Office.OneNote",
+    "Microsoft.OneConnect",
+    "Microsoft.People",
+    "Microsoft.Print3D",
+    "Microsoft.SkypeApp",
+    "Microsoft.Todos",
+    "Microsoft.WindowsAlarms",
+    "Microsoft.WindowsFeedbackHub",
+    "Microsoft.WindowsMaps",
+    "Microsoft.YourPhone",
+    "Microsoft.ZuneMusic",
+    "Microsoft.ZuneVideo",
+    "Microsoft.GamingApp",
+    "Microsoft.XboxGameOverlay",
+    "Microsoft.XboxGamingOverlay",
+    "Microsoft.XboxIdentityProvider",
+    "Microsoft.XboxSpeechToTextOverlay",
+    "king.com.CandyCrush",
+    "king.com.BubbleWitch",
+    "king.com.FarmHeroesSaga",
+    "Microsoft.549981C3F5F10",
+    "Disney.37853D22215B2",
+    "SpotifyAB.SpotifyMusic",
+    "Facebook.Facebook",
+    "Twitter.Twitter",
+    "TikTok.TikTok"
+  ],
+
+  "_comment_OptionalRemoval": [
+    "These are borderline - some users may want them.",
+    "Disabled by default. Enable with RemoveOptional = true in settings.json."
+  ],
+  "OptionalRemoval": [
+    "Microsoft.WindowsCamera",
+    "Microsoft.WindowsSoundRecorder",
+    "Microsoft.WindowsCommunicationsApps",
+    "Microsoft.OutlookForWindows",
+    "Microsoft.Teams",
+    "Microsoft.Clipchamp",
+    "Microsoft.PowerAutomateDesktop",
+    "Microsoft.Xbox.TCUI",
+    "Microsoft.XboxApp"
+  ],
+
+  "_comment_DoNotRemove": [
+    "REFERENCE ONLY - this list is not read by the script.",
+    "It documents what should never be removed.",
+    "The actual protection list lives in Debloat.ps1 as $DO_NOT_REMOVE."
+  ],
+  "DoNotRemove_REFERENCE": [
+    "Microsoft.WindowsStore",
+    "Microsoft.StorePurchaseApp",
+    "Microsoft.DesktopAppInstaller",
+    "Microsoft.UI.Xaml*",
+    "Microsoft.VCLibs*",
+    "Microsoft.NET*",
+    "Microsoft.MicrosoftEdge*",
+    "Microsoft.Win32WebViewHost",
+    "Windows.CBSPreview"
+  ]
+}
