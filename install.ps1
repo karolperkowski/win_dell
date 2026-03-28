@@ -1,4 +1,5 @@
 #Requires -Version 5.1
+# Compatible: Windows PowerShell 5.1+ and PowerShell 7+
 <#
 .SYNOPSIS
     WinDeploy one-liner installer.
