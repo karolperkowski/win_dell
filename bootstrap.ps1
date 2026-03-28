@@ -99,7 +99,7 @@ function Register-ResumeTask {
     $orchestratorPath = Join-Path $LocalRepoRoot 'core\Orchestrator.ps1'
     $action = New-ScheduledTaskAction `
         -Execute 'powershell.exe' `
-        -Argument "-NonInteractive -ExecutionPolicy Bypass -File `"$orchestratorPath`""
+        -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$orchestratorPath`""
 
     # Trigger 1: at system startup (catches machine-level reboots)
     $triggerBoot = New-ScheduledTaskTrigger -AtStartup
@@ -214,7 +214,7 @@ try {
     # Step 7 - Kick off orchestrator immediately without waiting for a reboot
     Write-BootstrapLog 'Launching orchestrator for first run...'
     $orchestratorPath = Join-Path $localRepo 'core\Orchestrator.ps1'
-    & powershell.exe -NonInteractive -ExecutionPolicy Bypass -File $orchestratorPath
+    & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $orchestratorPath
 
 } catch {
     $errMsg = "Bootstrap FATAL: $($_.Exception.Message) | Line $($_.InvocationInfo.ScriptLineNumber)"
