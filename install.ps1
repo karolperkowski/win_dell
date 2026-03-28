@@ -56,7 +56,8 @@ function Write-InstallLog {
     param([string]$Message, [string]$Level = 'INFO')
     $colours = @{ INFO='Cyan'; OK='Green'; WARN='Yellow'; ERROR='Red' }
     $ts = Get-Date -Format 'HH:mm:ss'
-    Write-Host "[$ts][$Level] $Message" -ForegroundColor ($colours[$Level] ?? 'White')
+    $colour = if ($colours.ContainsKey($Level)) { $colours[$Level] } else { 'White' }
+    Write-Host "[$ts][$Level] $Message" -ForegroundColor $colour
 }
 
 # ---------------------------------------------------------------------------
