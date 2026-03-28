@@ -173,6 +173,44 @@ function Register-MonitorTask {
 
     Write-Host "[Bootstrap] Monitor task '$monitorTaskName' registered."
 }
+
+function Register-NotifyTask {
+    <#
+    Registers WinDeploy-Notify — a lightweight logon task that checks whether
+    the deployment tasks are gone and, if so, shows a tray notification.
+    Unlike Resume and Monitor, this task is NOT removed by Cleanup.
+    It intentionally survives the final reboot, fires once, then removes itself.
+    #>
+    param([string]$LocalRepoRoot)
+
+    $notifyTaskName = 'WinDeploy-Notify'
+    Unregister-ScheduledTask -TaskName $notifyTaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    $notifyPath = Join-Path $LocalRepoRoot 'core\Notify.ps1'
+    $action = New-ScheduledTaskAction `
+        -Execute    'powershell.exe' `
+        -Argument   "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$notifyPath`""
+
+    $trigger   = New-ScheduledTaskTrigger -AtLogOn
+    $principal = New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -RunLevel Limited
+    $settings  = New-ScheduledTaskSettingsSet `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
+        -MultipleInstances IgnoreNew `
+        -StartWhenAvailable
+
+    Register-ScheduledTask `
+        -TaskName   $notifyTaskName `
+        -Action     $action `
+        -Trigger    $trigger `
+        -Principal  $principal `
+        -Settings   $settings `
+        -Description 'WinDeploy post-deployment tray notification (self-removing)' `
+        -Force | Out-Null
+
+    Write-Host "[Bootstrap] Notify task '$notifyTaskName' registered."
+}
+
+function Set-AutoLogon {
     <#
     Configures the built-in Administrator account for automatic logon so
     reboots during SYSTEM-level stages (Windows Update) re-enter a session
@@ -254,6 +292,9 @@ try {
 
     # Step 6b - Register monitor task (visible window, interactive user)
     Register-MonitorTask -LocalRepoRoot $localRepo
+
+    # Step 6c - Register notify task (tray notification after deployment completes)
+    Register-NotifyTask -LocalRepoRoot $localRepo
 
     # Step 7 - Kick off orchestrator immediately without waiting for a reboot
     Write-BootstrapLog 'Launching orchestrator for first run...'
