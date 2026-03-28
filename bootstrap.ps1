@@ -131,7 +131,48 @@ function Register-ResumeTask {
     Write-Host "[Bootstrap] Scheduled task '$($Script:TASK_NAME)' registered."
 }
 
-function Set-AutoLogon {
+function Register-MonitorTask {
+    <#
+    Creates a scheduled task that shows the WPF monitor window at every logon.
+    Unlike the orchestrator task (which runs as SYSTEM, hidden), this task runs
+    as the interactive user so the window is visible on the desktop.
+    #>
+    param([string]$LocalRepoRoot)
+
+    $monitorTaskName = 'WinDeploy-Monitor'
+    Unregister-ScheduledTask -TaskName $monitorTaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    $monitorPath = Join-Path $LocalRepoRoot 'core\Monitor.ps1'
+    $action = New-ScheduledTaskAction `
+        -Execute 'powershell.exe' `
+        -Argument "-ExecutionPolicy Bypass -WindowStyle Normal -File `"$monitorPath`""
+
+    # Logon trigger only - the window should appear when a user logs in,
+    # not at bare startup when there is no desktop to display it on
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+
+    # Run as interactive user (whoever logs on), not SYSTEM
+    # This is what makes the window appear on the desktop
+    $principal = New-ScheduledTaskPrincipal `
+        -GroupId 'BUILTIN\Users' `
+        -RunLevel Limited
+
+    $settings = New-ScheduledTaskSettingsSet `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+        -MultipleInstances IgnoreNew `
+        -StartWhenAvailable
+
+    Register-ScheduledTask `
+        -TaskName   $monitorTaskName `
+        -Action     $action `
+        -Trigger    $trigger `
+        -Principal  $principal `
+        -Settings   $settings `
+        -Description 'WinDeploy deployment progress monitor (visible window)' `
+        -Force | Out-Null
+
+    Write-Host "[Bootstrap] Monitor task '$monitorTaskName' registered."
+}
     <#
     Configures the built-in Administrator account for automatic logon so
     reboots during SYSTEM-level stages (Windows Update) re-enter a session
@@ -208,8 +249,11 @@ try {
     # comment out the call if your imaging process already handles this)
     Set-AutoLogon -Username 'Administrator' -Password ''
 
-    # Step 6 - Register resume task
+    # Step 6 - Register resume task (hidden, SYSTEM)
     Register-ResumeTask -LocalRepoRoot $localRepo
+
+    # Step 6b - Register monitor task (visible window, interactive user)
+    Register-MonitorTask -LocalRepoRoot $localRepo
 
     # Step 7 - Kick off orchestrator immediately without waiting for a reboot
     Write-BootstrapLog 'Launching orchestrator for first run...'

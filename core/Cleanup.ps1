@@ -69,9 +69,14 @@ function Write-CompletionReport {
 try {
     Write-LogInfo "Stage '$StageName' starting."
 
-    # Remove scheduled task
+    # Remove resume task
     Unregister-ScheduledTask -TaskName $TASK_NAME -Confirm:$false -ErrorAction SilentlyContinue
     Write-LogSuccess "Scheduled task '$TASK_NAME' removed."
+
+    # Remove monitor task - it auto-closes its own window when DeployComplete = true,
+    # but we also unregister the task so it doesn't re-launch after the final reboot
+    Unregister-ScheduledTask -TaskName 'WinDeploy-Monitor' -Confirm:$false -ErrorAction SilentlyContinue
+    Write-LogSuccess "Scheduled task 'WinDeploy-Monitor' removed."
 
     # Disable auto-logon
     $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
