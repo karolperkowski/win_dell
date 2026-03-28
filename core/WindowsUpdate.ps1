@@ -30,6 +30,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
 
 # ---------------------------------------------------------------------------
 # Import shared modules
@@ -116,9 +117,10 @@ function Install-PendingUpdates {
     try {
         $result = Install-WindowsUpdate `
             -AcceptAll `
-            -AutoReboot:$false `    # We manage reboots, not WU
+            -AutoReboot:$false `
             -IgnoreReboot `
             -Confirm:$false `
+            -NotTitle 'Preview' `
             -ErrorAction Stop
 
         $rebootRequired = $result | Where-Object { $_.RebootRequired -eq $true }

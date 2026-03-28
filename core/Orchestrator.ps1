@@ -21,6 +21,7 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
 
 # ---------------------------------------------------------------------------
 # Resolve module paths relative to this script's location
@@ -114,7 +115,7 @@ function Invoke-RebootWithReason {
     Write-LogInfo "System will restart in $DelaySeconds seconds..."
 
     Start-Sleep -Seconds $DelaySeconds
-    Restart-Computer -Force
+    Restart-Computer -Force -Confirm:$false
     # Script ends here - orchestrator will be re-launched by the scheduled task
     exit 0
 }

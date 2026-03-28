@@ -24,6 +24,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
 
 $coreDir = $PSScriptRoot
 $repoRoot = Split-Path $coreDir -Parent

@@ -17,6 +17,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
 
 $coreDir  = $PSScriptRoot
 Import-Module (Join-Path $coreDir 'Logging.psm1') -Force
