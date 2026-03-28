@@ -187,6 +187,14 @@ function Set-AdditionalTweaks {
     # Disable fast startup (can cause issues with dual-boot and some hardware)
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0
 
+    # Set timezone to Eastern Time (New York)
+    try {
+        & tzutil.exe /s "Eastern Standard Time"
+        Write-LogInfo '  Timezone set to Eastern Standard Time (New York)'
+    } catch {
+        Write-LogWarning "  tzutil failed: $($_.Exception.Message)"
+    }
+
     # Set UTC time (important for dual-boot / VMs)
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' 'RealTimeIsUniversal' 1
 
