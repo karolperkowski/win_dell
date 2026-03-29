@@ -33,7 +33,9 @@ function Write-Early {
     try {
         $dir = Split-Path $Script:_rawLog
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
-        Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
+        # AppendAllText uses a write-only stream - safe for concurrent writers
+        # (Orchestrator as SYSTEM and Monitor as User both write early.log)
+        [System.IO.File]::AppendAllText($Script:_rawLog, "$line`r`n", [System.Text.Encoding]::UTF8)
     } catch { Write-Host "[Monitor] Log write failed: $_" }
 }
 
@@ -83,7 +85,7 @@ try {
     Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);' `
              -Name 'SleepGuard' -Namespace 'WinDeploy' -ErrorAction Stop
     [WinDeploy.SleepGuard]::SetThreadExecutionState(0x80000003) | Out-Null
-} catch { Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] SleepGuard failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue }
+} catch { [System.IO.File]::AppendAllText($Script:_rawLog, "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] SleepGuard failed: $($_.Exception.Message)" + "`r`n", [System.Text.Encoding]::UTF8) }
 
 # ---------------------------------------------------------------------------
 # XAML
@@ -224,7 +226,7 @@ try {
 } catch {
     $msg = "FATAL: XamlReader.Load failed - $($_.Exception.Message)"
     Write-Early $msg
-    try { Add-Content -Path $Script:_crashLog -Value $msg -Encoding UTF8 } catch {}
+    try { [System.IO.File]::AppendAllText($Script:_crashLog, ($msg) + "`r`n", [System.Text.Encoding]::UTF8) } catch {}
     try {
         [System.IO.File]::WriteAllText(
             'C:\ProgramData\WinDeploy\Logs\monitor_crash.txt',
@@ -333,8 +335,8 @@ function Show-MonitorError {
     # Write to log file
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$ts] [ERROR] $Message"
-    try { Add-Content -Path $MONITOR_LOG -Value $line -Encoding UTF8 } catch {}
-    try { Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8 } catch {}
+    try { [System.IO.File]::AppendAllText($MONITOR_LOG, ($line) + "`r`n", [System.Text.Encoding]::UTF8) } catch {}
+    try { [System.IO.File]::AppendAllText($Script:_rawLog, ($line) + "`r`n", [System.Text.Encoding]::UTF8) } catch {}
     # Show in UI - window stays open
     try {
         $ErrorText.Text    = $Message
@@ -355,7 +357,7 @@ function Load-QrImage ($QrPath) {
         $Script:LastQrPath = $QrPath
     } catch {
         $QrImage.Source = $null
-        Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] QR image load failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue
+        [System.IO.File]::AppendAllText($Script:_rawLog, "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] QR image load failed: $($_.Exception.Message)" + "`r`n", [System.Text.Encoding]::UTF8)
     }
 }
 
@@ -439,7 +441,7 @@ function Update-UI {
                     Margin       = [System.Windows.Thickness]::new(0,1,0,1)
                 }) | Out-Null
             }
-        } catch { Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] Stage row render failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue }
+        } catch { [System.IO.File]::AppendAllText($Script:_rawLog, "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] Stage row render failed: $($_.Exception.Message)" + "`r`n", [System.Text.Encoding]::UTF8) }
     }
 
     # Completion
@@ -479,7 +481,7 @@ $Window.Add_Closed({ $timer.Stop() })
 # Write startup entry to monitor log before ShowDialog blocks
 $null = try {
     $startLine = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Monitor started. PID:$PID User:$([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-    Add-Content -Path $MONITOR_LOG -Value $startLine -Encoding UTF8
+    [System.IO.File]::AppendAllText($MONITOR_LOG, ($startLine) + "`r`n", [System.Text.Encoding]::UTF8)
 } catch {}
 
 # ShowDialog blocks until window closes. Any exception here is a WPF-level
@@ -489,8 +491,8 @@ try {
     [void]$Window.ShowDialog()
 } catch {
     $crashMsg = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [FATAL] Monitor crashed: $($_.Exception.Message) Line:$($_.InvocationInfo.ScriptLineNumber)"
-    try { Add-Content -Path $MONITOR_LOG  -Value $crashMsg -Encoding UTF8 } catch {}
-    try { Add-Content -Path $Script:_rawLog -Value $crashMsg -Encoding UTF8 } catch {}
+    try { [System.IO.File]::AppendAllText($MONITOR_LOG, ($crashMsg) + "`r`n", [System.Text.Encoding]::UTF8) } catch {}
+    try { [System.IO.File]::AppendAllText($Script:_rawLog, ($crashMsg) + "`r`n", [System.Text.Encoding]::UTF8) } catch {}
     # Show a Windows MessageBox since the WPF window is gone
     [System.Windows.MessageBox]::Show(
         "WinDeploy Monitor crashed:`n`n$($_.Exception.Message)`n`nCheck: $MONITOR_LOG",
