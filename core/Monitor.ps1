@@ -390,8 +390,18 @@ function Update-UI {
         $SubtitleLabel.Text = "$env:COMPUTERNAME  ·  Started $started"
         $ElapsedLabel.Text  = Format-Elapsed (Get-StateProp $state 'BootstrappedAt' '')
         $RebootLabel.Text   = (Get-StateProp $state 'RebootCount' 0).ToString()
-    } else {
-        $FooterNote.Text = "Watching $STATE_FILE ..."; return
+    if (-not $state) {
+        # State file doesn't exist yet - check if orchestrator task is running
+        try {
+            $task = Get-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
+            $orchStatus = switch ($task.State) {
+                'Running' { '● Orchestrator running - waiting for state.json...' }
+                'Ready'   { '○ Orchestrator not yet started - waiting for trigger...' }
+                default   { "Task state: $($task.State)" }
+            }
+        } catch { $orchStatus = 'WinDeploy-Resume task not found' }
+        $FooterNote.Text = $orchStatus
+        return
     }
 
     $done  = @(Get-StateProp $state 'CompletedStages' @()).Count
@@ -479,7 +489,38 @@ function Update-UI {
         $StatusBorder.BorderBrush = New-Brush '#1A3050'
     }
 
-    $FooterNote.Text = "Refresh: $(Get-Date -Format 'HH:mm:ss')  ·  $DEPLOY_ROOT\Logs"
+    # --- Footer: state file age + orchestrator status ---
+    $stateAge    = ''
+    $orchStatus  = ''
+    $lastErrLine = ''
+
+    # How long ago was state.json last written
+    try {
+        $mtime    = (Get-Item $STATE_FILE -ErrorAction Stop).LastWriteTime
+        $ageSecs  = [int](([datetime]::Now - $mtime).TotalSeconds)
+        $stateAge = if ($ageSecs -lt 60)   { "${ageSecs}s ago" }
+                    elseif ($ageSecs -lt 3600) { "$([int]($ageSecs/60))m ago" }
+                    else                   { "$([int]($ageSecs/3600))h ago" }
+    } catch { $stateAge = '?' }
+
+    # Is the Resume task currently running?
+    try {
+        $task = Get-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
+        $orchStatus = switch ($task.State) {
+            'Running' { '● Running' }
+            'Ready'   { '○ Waiting' }
+            default   { $task.State }
+        }
+    } catch { $orchStatus = 'task?' }
+
+    # Last error from state
+    $lastErr = Get-StateProp $state 'LastError' ''
+    if ($lastErr) {
+        $lastErrStage = Get-StateProp $state 'LastErrorStage' ''
+        $lastErrLine  = "  ·  Last error: [$lastErrStage] $($lastErr.ToString().Split([char]10)[0])"
+    }
+
+    $FooterNote.Text = "Updated $stateAge  ·  $orchStatus  ·  $(Get-Date -Format 'HH:mm:ss')$lastErrLine"
 }
 
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
