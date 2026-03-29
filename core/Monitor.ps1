@@ -371,10 +371,10 @@ function Update-UI {
     $ts    = Read-JsonFile $TS_JSON
 
     if ($state) {
-        $started = try { [datetime]::Parse($state.bootstrappedAt).ToString('HH:mm:ss') } catch { '...' }
+        $started = try { [datetime]::Parse($state.BootstrappedAt).ToString('HH:mm:ss') } catch { '...' }
         $SubtitleLabel.Text = "$env:COMPUTERNAME  ·  Started $started"
-        $ElapsedLabel.Text  = Format-Elapsed $state.bootstrappedAt
-        $RebootLabel.Text   = if ($state.rebootCount) { [string]$state.rebootCount } else { '0' }
+        $ElapsedLabel.Text  = Format-Elapsed $state.BootstrappedAt
+        $RebootLabel.Text   = if ($state.RebootCount) { [string]$state.RebootCount } else { '0' }
     } else {
         $FooterNote.Text = "Watching $STATE_FILE ..."; return
     }
@@ -391,8 +391,8 @@ function Update-UI {
     foreach ($name in $STAGE_ORDER) {
         $st   = Get-StageStatus $state $name
         $tss  = ''
-        if ($state.stageTimestamps -and $state.stageTimestamps.$name) {
-            $tss = try { [datetime]::Parse($state.stageTimestamps.$name).ToString('HH:mm:ss') } catch { '' }
+        if ($state.StageTimestamps -and $state.StageTimestamps.$name) {
+            $tss = try { [datetime]::Parse($state.StageTimestamps.$name).ToString('HH:mm:ss') } catch { '' }
         }
         $timeStr = switch ($st) { 'complete' { $tss } 'running' { 'Running...' } 'failed' { 'Failed' } default { 'Waiting' } }
         Add-StageRow -Label $STAGE_LABELS[$name] -Status $st -Time $timeStr
@@ -445,7 +445,7 @@ function Update-UI {
     }
 
     # Completion
-    if ($state.deployComplete) {
+    if ($state.DeployComplete) {
         $TitleLabel.Text           = 'Deployment complete'
         $StatusBadge.Text          = 'Complete'
         $StatusBadge.Foreground    = New-Brush '#4ADE80'
@@ -457,7 +457,7 @@ function Update-UI {
         if ($remaining -le 0) { $Window.Close(); return }
         $CloseCountdown.Text = "Closing in $remaining s"
     } else {
-        $lbl = if ($STAGE_LABELS[$state.currentStage]) { $STAGE_LABELS[$state.currentStage] } else { '...' }
+        $lbl = if ($STAGE_LABELS[$state.CurrentStage]) { $STAGE_LABELS[$state.CurrentStage] } else { '...' }
         $StatusBadge.Text         = $lbl
         $StatusBadge.Foreground   = New-Brush '#60A5FA'
         $StatusBorder.Background  = New-Brush '#0E1520'
