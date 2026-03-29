@@ -54,6 +54,8 @@ $Script:CoreDir   = $PSScriptRoot
 Write-Early "RepoRoot : $Script:RepoRoot"
 Write-Early "CoreDir  : $Script:CoreDir"
 
+try {
+
 # Resilience module first — validates dirs, state, and tasks before anything else
 try {
     Import-Module (Join-Path $Script:CoreDir 'Resilience.psm1') -DisableNameChecking -Force
@@ -62,11 +64,8 @@ try {
 } catch { Write-Early "Resilience.psm1 failed (non-fatal): $($_.Exception.Message)" }
 
 try {
-    Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force -Global
-    # PS 5.1 + StrictMode: module-exported variables via -Global need explicit
-    # script-scope binding. Use New-Variable to guarantee it exists in script scope.
-    $wdValue = Get-Variable -Name WD -Scope Global -ValueOnly -ErrorAction Stop
-    New-Variable -Name WD -Value $wdValue -Scope Script -Force
+    Import-Module (Join-Path $Script:CoreDir 'Config.psm1') -DisableNameChecking -Force
+    $Script:WD = Get-WDConfig
     Write-Early 'Config.psm1 loaded OK'
 } catch { Write-Early "FATAL: Config.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
@@ -210,7 +209,6 @@ function ConvertPSObjectToHashtable {
 
 Initialize-Logger -Stage 'Orchestrator'
 
-try {
     Write-LogSection 'WinDeploy Orchestrator Started'
     Write-LogInfo "Repo root : $Script:RepoRoot"
     Write-LogInfo "Start time: $(Get-Date -Format 'o')"
@@ -324,9 +322,7 @@ try {
     exit 0
 
 } catch {
-    Write-LogError "ORCHESTRATOR FATAL: $($_.Exception.Message)"
-    Write-LogError "Line: $($_.InvocationInfo.ScriptLineNumber)"
-    try { Write-StateError -StageName 'Orchestrator' -ErrorMessage $_.Exception.Message } catch { Write-Host "[Orchestrator] State error write failed: $($_.Exception.Message)" }
-    Close-Logger -FinalStatus 'FAILED'
+    Write-Early "ORCHESTRATOR FATAL: $($_.Exception.Message)"
+    Write-Early "Line: $($_.InvocationInfo.ScriptLineNumber)"
     exit 1
 }

@@ -78,7 +78,7 @@ Re-running updates scripts and preserves state. The monitor window launches imme
 | `ConvertFrom-Json -AsHashtable` | Gate behind `$PSVersionTable.PSVersion.Major -ge 6`, use `ConvertTo-Hashtable` shim on 5.1 |
 | `Get-WindowsUpdate -AcceptAll` | `-AcceptAll` only valid on `Install-WindowsUpdate` |
 | `trap { continue }` to skip failed assignment | Use `try/catch` — `continue` resumes after the failed statement, not at the catch |
-| `Add-Content` with concurrent SYSTEM writer | `[System.IO.File]::AppendAllText(path, text, UTF8)` |
+| `Add-Content` (any usage) | **Banned.** Writes UTF-16LE in PS 5.1, blocks concurrent readers. Use `[System.IO.File]::AppendAllText(path, text, UTF8)`. Lint rule `IO-BannedAddContent` enforces this. |
 | `CharacterSpacing` in WPF XAML | Silverlight-only — not available in WPF, remove it |
 | `-LogonType Interactive` with `-GroupId` | Incompatible parameter set — omit `-LogonType` for group-based principals |
 | `New-ScheduledTaskPrincipal -GroupId` + `-LogonType` | Invalid combination — use one or the other |
@@ -89,11 +89,14 @@ Re-running updates scripts and preserves state. The monitor window launches imme
 
 ## Shared constants — always use $WD.*
 
-`core/Config.psm1` exports `$WD`. Every script that needs a path or task name imports this:
+`core/Config.psm1` exports a `Get-WDConfig` function (not a variable). Every script that needs a path or task name imports this:
 
 ```powershell
 Import-Module (Join-Path $PSScriptRoot 'Config.psm1') -DisableNameChecking -Force
+$WD = Get-WDConfig
 ```
+
+**Why a function, not a variable:** PS 5.1 + `Set-StrictMode -Version Latest` does not reliably resolve module-exported variables (`Export-ModuleMember -Variable`) across child process boundaries. Functions always work.
 
 Key values:
 

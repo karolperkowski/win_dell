@@ -72,7 +72,8 @@ foreach ($task in @('WinDeploy-Resume','WinDeploy-Monitor','WinDeploy-Notify')) 
 # --- Module import test ---
 Check 'Import Config.psm1'  {
     Import-Module "$repoDir\core\Config.psm1" -Force -DisableNameChecking -ErrorAction Stop
-    "OK - DeployRoot=$($WD.DeployRoot)"
+    $cfg = Get-WDConfig
+    "OK - DeployRoot=$($cfg.DeployRoot)"
 }
 Check 'Import State.psm1'   {
     Import-Module "$repoDir\core\State.psm1"   -Force -DisableNameChecking -ErrorAction Stop

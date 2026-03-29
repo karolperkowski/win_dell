@@ -10,6 +10,7 @@
 
     Import pattern (from any core script):
         Import-Module (Join-Path $PSScriptRoot 'Config.psm1') -DisableNameChecking -Force
+        $WD = Get-WDConfig
 #>
 
 Set-StrictMode -Version Latest
@@ -62,9 +63,12 @@ $Script:STAGE_LABELS = [ordered]@{
 $Script:REBOOT_ALLOWED_STAGES = @('WindowsUpdate', 'InstallTailscale', 'Cleanup')
 
 # ---------------------------------------------------------------------------
-# Expose as module-level variables (accessed as $WD.* by callers)
+# Config object — built once at module load time, returned by Get-WDConfig.
+# Using a function export instead of Export-ModuleMember -Variable because
+# PS 5.1 + StrictMode does not reliably resolve module-exported variables
+# across child process boundaries. Functions always work.
 # ---------------------------------------------------------------------------
-$WD = [PSCustomObject]@{
+$Script:_config = [PSCustomObject]@{
     DeployRoot          = $Script:DEPLOY_ROOT
     RepoDir             = $Script:REPO_DIR
     LogDir              = $Script:LOG_DIR
@@ -81,6 +85,11 @@ $WD = [PSCustomObject]@{
     RebootAllowedStages = $Script:REBOOT_ALLOWED_STAGES
 }
 
-Export-ModuleMember -Variable WD
-# Ensure $WD is referenced after assignment so static analysis tools don't flag it as unused
-$null = $WD
+function Get-WDConfig {
+    <#
+    .SYNOPSIS Returns the WinDeploy config object. Always callable after Import-Module.
+    #>
+    return $Script:_config
+}
+
+Export-ModuleMember -Function 'Get-WDConfig'

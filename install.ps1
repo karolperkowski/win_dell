@@ -77,7 +77,35 @@ $SIG_URL       = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/
 # This is the ONLY value that must be updated when you rotate your GPG key.
 # The private key never leaves your machine or GitHub Secrets.
 $GPG_PUBLIC_KEY = @'
-REPLACE_WITH_YOUR_GPG_PUBLIC_KEY_BLOCK
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBGnJsS8BEACnajQ2vpt/GQ4/f+o30/eUqCzXnVkBvV6a2pYz8zULonreYSEh
+Fq6RRiOJPBnn81B7yX1rTtKeL13oN7u7FdZxWiQC8r1mOUuLjd5J6ozz8CNRKk4k
+E9luLLaENGHbI8iXmMkSfsps7rKATT7IiBPd14F2oS6pn/1GN7meMI4HE1y56JfX
+FFjEo5HUE8ZjU+0dqhNW0UJt4b5Us9AMu0D1VyTYICKFZm/M4XiBnQfWwc9wknfq
+k2KIVCNkDEbOzQ1FQlBUDx6R98ptpF6d2pf80KDtpagelE5dp9QpfQOknD+51zEd
+k7orOJAWTW+Fa8xElZ6g8AJonRgi+qcamNQ8UD8vRGafRrIzlAIOO+Sa/FN07m/I
+0eZyzbokFW9dkXmNwSbcefDgBJ9nB6R786dwxiNWmyH62mWnDB6F3rTCzgX7fK9I
+Kgvl7Mzj+gogr8yDejIh8GgkF5nGHIxINYwv+IVgk7XAa5p/OzfdqsRUlrw19jkB
+9WHAjm81wHfa9tYL1IjaHctFvptBVYLb4np4FJ7i9iHZS5fbjpv74iTLXtAMlZG/
+OEKDB6Fc2wb+MoTo2lw5f+4Ed242ncwvsDSpDO0Hsvc4y0+u5iz2Zw9iO3CPV5gu
+G29xQnjtzapX7DRGMdhKkENGkblXnbooveKrfxg/JtWwVnQ9/fAIbYpkfQARAQAB
+tCpXaW5EZXBsb3kgU2lnbmluZyA8ZGVwbG95QHdpbmRlcGxveS5sb2NhbD6JAlQE
+EwEKAD4WIQS1GuHDhLVQDJSce38aoHRIQN1WXQUCacmxLwIbAwUJA8JnAAULCQgH
+AgYVCgkICwIEFgIDAQIeAQIXgAAKCRAaoHRIQN1WXbX1EACc4W/GB4PvHSMxNqn+
+Nqo0ZPajuZa6BbPDiO2DoZESyw+NmlXEU9q30ygqyHi+yrybe/HzY2q/Ku50YbpN
+cNqWbkCQCLTXlbVvnMVo4YJlIwnxX6QgJFrZZ1HFBHiFkqC6Tn0WNe/GZt6FSk7F
+Iz/09pMyYX9YU2OIlZMYqWvkZu+CoOSqYYOgkGpXwiWd7kAypVdsDV/eN2STMPo9
+SzMlYIYu6gk5fxBA2r2lrjBfn4sg/iMqTV4TysMKWPELoXenSJ1/uuoewq7tVn3b
+MR4trrMUcbLQjcKx/yqLOA7+pH6ZMPU5MLCmKxgvFqc/6vLuPxkEZfafXZr0+rJV
+S3S3O4Tp2+LVGEfXLHAJlRZgCm6mC/nJciHKLBrBM75NIw/yxLKPsOhRgniv6qBV
+bOGP2p/yWHo5ylLt6/lvGYnl8XjFrpyGgcEHhM4VulZxM1GURRDV4JvQHs6KIr+d
+sex2ajdUel/Ska4g2E7nzdMt2i+1GtNRKFJHjVeqJZ7S+wuB2epuPYRE1BD5VTO0
+UqZ1UpEhWib4CExHlrlWgXTp34zYnSCXXeJvDnfithyFBubh/7d0yR0tf32Qea2q
+KnU6DMrDtqM0OlFKalbEEjpmGSrcJIKNepua3MFj6ItL68zZ+7UXTTCAr6xaZk+i
+NFa/jZbBtV9pifm3t6i/zCdVYA==
+=Ygdm
+-----END PGP PUBLIC KEY BLOCK-----
 '@
 $REPO_DIR     = Join-Path $InstallRoot 'repo'
 $TEMP_SCRIPT  = Join-Path $env:TEMP 'windeploy_install.ps1'

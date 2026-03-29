@@ -293,9 +293,10 @@ try {
     $qrGenerated = New-QRCodePng -Data $script:capturedAuthUrl -OutputPath $TS_QR_PNG
 
     # ── Write tailscale.json so monitor can display it immediately ──
+    $qrPath = if ($qrGenerated) { $TS_QR_PNG } else { '' }
     Write-TailscaleJson `
         -AuthUrl    $script:capturedAuthUrl `
-        -QrPath     (if ($qrGenerated) { $TS_QR_PNG } else { '' }) `
+        -QrPath     $qrPath `
         -Registered $false
 
     Write-LogInfo "Waiting for QR scan... (timeout: $qrTimeout minutes)"

@@ -412,6 +412,46 @@ function Invoke-StatePropertyCheck {
     Write-LintLog "  Monitor reads : $($monitorKeys.Count)"
 }
 
+function Invoke-AddContentBanCheck {
+    Write-LintLog "`nChecking for banned Add-Content usage..."
+
+    $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
+               Where-Object { $_.FullName -notlike '*\.git\*' -and $_.Name -ne 'lint.ps1' }
+
+    foreach ($file in $psFiles) {
+        $lines = Get-Content $file.FullName
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            if ($line.TrimStart().StartsWith('#')) { continue }
+            if ($line -match '\bAdd-Content\b') {
+                Add-Violation -File $file.FullName -Line ($i + 1) `
+                    -Rule 'IO-BannedAddContent' `
+                    -Message 'Add-Content writes UTF-16LE in PS 5.1. Use [System.IO.File]::AppendAllText($path, $text, [System.Text.Encoding]::UTF8) instead.'
+            }
+        }
+    }
+}
+
+function Invoke-InlineIfArgumentCheck {
+    Write-LintLog "`nChecking for inline if() as function argument..."
+
+    $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
+               Where-Object { $_.FullName -notlike '*\.git\*' -and $_.Name -ne 'lint.ps1' }
+
+    foreach ($file in $psFiles) {
+        $lines = Get-Content $file.FullName
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            if ($line.TrimStart().StartsWith('#')) { continue }
+            if ($line -match '\(\s*if\s*\(') {
+                Add-Violation -File $file.FullName -Line ($i + 1) `
+                    -Rule 'PS51-InlineIfArgument' `
+                    -Message 'Inline (if (...) {...} else {...}) as function argument fails in PS 5.1. Assign to a variable first.'
+            }
+        }
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Run all checks
 # ---------------------------------------------------------------------------
@@ -424,6 +464,8 @@ Invoke-ScheduledTaskCheck
 Invoke-HardcodedPathCheck
 Invoke-StageContractCheck
 Invoke-StatePropertyCheck
+Invoke-AddContentBanCheck
+Invoke-InlineIfArgumentCheck
 
 # ---------------------------------------------------------------------------
 # Report

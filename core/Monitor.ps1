@@ -74,19 +74,23 @@ Write-Early "Running as   : $([Security.Principal.WindowsIdentity]::GetCurrent()
 Write-Early "ExecutionPolicy: $(Get-ExecutionPolicy)"
 
 
-# Load shared constants - provides $WD.DeployRoot, $WD.StageOrder, etc.
+# Load shared constants - provides Get-WDConfig for DeployRoot, StageOrder, etc.
 $Script:_cfgPath = Join-Path $Script:_scriptDir 'Config.psm1'
+$Script:_wd = $null
 if (Test-Path $Script:_cfgPath) {
     Import-Module $Script:_cfgPath -DisableNameChecking -Force
+    if (Get-Command Get-WDConfig -ErrorAction SilentlyContinue) {
+        $Script:_wd = Get-WDConfig
+    }
 }
 
-$DEPLOY_ROOT  = if ($WD) { $WD.DeployRoot    } else { 'C:\ProgramData\WinDeploy' }
-$STATE_FILE   = if ($WD) { $WD.StateFile     } else { "$DEPLOY_ROOT\state.json" }
+$DEPLOY_ROOT  = if ($Script:_wd) { $Script:_wd.DeployRoot    } else { 'C:\ProgramData\WinDeploy' }
+$STATE_FILE   = if ($Script:_wd) { $Script:_wd.StateFile     } else { "$DEPLOY_ROOT\state.json" }
 $SESSION_LOG  = "$DEPLOY_ROOT\Logs\session.log"
 $MONITOR_LOG  = "$DEPLOY_ROOT\Logs\task_monitor.log"
-$TS_JSON      = if ($WD) { $WD.TailscaleJson } else { "$DEPLOY_ROOT\tailscale.json" }
-$STAGE_ORDER  = if ($WD) { @($WD.StageOrder) } else { @('WindowsUpdate','PowerSettings','Debloat','WinTweaks','InstallDellSupportAssist','InstallDellPowerManager','InstallTailscale','Cleanup') }
-$STAGE_LABELS = if ($WD) { $WD.StageLabels   } else { @{} }
+$TS_JSON      = if ($Script:_wd) { $Script:_wd.TailscaleJson } else { "$DEPLOY_ROOT\tailscale.json" }
+$STAGE_ORDER  = if ($Script:_wd) { @($Script:_wd.StageOrder) } else { @('WindowsUpdate','PowerSettings','Debloat','WinTweaks','InstallDellSupportAssist','InstallDellPowerManager','InstallTailscale','Cleanup') }
+$STAGE_LABELS = if ($Script:_wd) { $Script:_wd.StageLabels   } else { @{} }
 $REFRESH_MS   = 3000
 $CLOSE_DELAY  = 60
 

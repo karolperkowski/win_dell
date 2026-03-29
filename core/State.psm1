@@ -32,21 +32,25 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Import shared constants - provides $WD.StageOrder, $WD.StateFile, etc.
+# Import shared constants - provides Get-WDConfig for StageOrder, StateFile, etc.
 $Script:_configPath = Join-Path $PSScriptRoot 'Config.psm1'
+$Script:_wd = $null
 if (Test-Path $Script:_configPath) {
     Import-Module $Script:_configPath -DisableNameChecking -Force
+    if (Get-Command Get-WDConfig -ErrorAction SilentlyContinue) {
+        $Script:_wd = Get-WDConfig
+    }
 }
 
 # ---------------------------------------------------------------------------
 # Module-scoped constants
 # ---------------------------------------------------------------------------
-$Script:STATE_FILE   = if ($WD) { $WD.StateFile } else { 'C:\ProgramData\WinDeploy\state.json' }
+$Script:STATE_FILE   = if ($Script:_wd) { $Script:_wd.StateFile } else { 'C:\ProgramData\WinDeploy\state.json' }
 $Script:SCHEMA_VER   = 1
 $Script:LOCK_TIMEOUT = 10
 
 # Canonical pipeline order - sourced from Config.psm1, fallback inline
-$Script:STAGE_ORDER  = if ($WD) { [System.Collections.Generic.List[string]]$WD.StageOrder } else {
+$Script:STAGE_ORDER  = if ($Script:_wd) { [System.Collections.Generic.List[string]]$Script:_wd.StageOrder } else {
     [System.Collections.Generic.List[string]]@(
         'PowerSettings','Debloat','WinTweaks',
         'InstallDellSupportAssist','InstallDellPowerManager',

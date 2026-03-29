@@ -48,7 +48,7 @@ function Write-ResilienceLog {
         if (-not (Test-Path $Script:LOG_DIR)) {
             New-Item -ItemType Directory -Path $Script:LOG_DIR -Force | Out-Null
         }
-        Add-Content -Path $Script:EARLY_LOG -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+        try { [System.IO.File]::AppendAllText($Script:EARLY_LOG, "$line`r`n", [System.Text.Encoding]::UTF8) } catch {}
     } catch { Write-Host "[Resilience] Log write failed: $($_.Exception.Message)" }
 
     # Then console
@@ -355,7 +355,7 @@ foreach ($p in $procs) {
     $age   = (Get-Date) - $start
     if ($age.TotalHours -gt $maxAgeHours) {
         $log = 'C:\ProgramData\WinDeploy\Logs\early.log'
-        Add-Content $log "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WATCHDOG] Killing hung process PID $($p.ProcessId) (age: $([int]$age.TotalHours)h)"
+        [System.IO.File]::AppendAllText($log, "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WATCHDOG] Killing hung process PID $($p.ProcessId) (age: $([int]$age.TotalHours)h)`r`n", [System.Text.Encoding]::UTF8)
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
     }
 }

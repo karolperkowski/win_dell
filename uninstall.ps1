@@ -87,7 +87,7 @@ function Write-UninstallLog {
         if (-not (Test-Path $DEPLOY_ROOT)) {
             New-Item -ItemType Directory $DEPLOY_ROOT -Force | Out-Null
         }
-        Add-Content -Path $UNINSTALL_LOG -Value $line -Encoding UTF8
+        [System.IO.File]::AppendAllText($UNINSTALL_LOG, "$line`r`n", [System.Text.Encoding]::UTF8)
     } catch { <# non-fatal #> }
 }
 

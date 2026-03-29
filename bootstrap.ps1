@@ -42,7 +42,7 @@ if (Test-Path $Script:_resPath) {
     $earlyLog = 'C:\ProgramData\WinDeploy\Logs\early.log'
     $earlyDir = Split-Path $earlyLog
     if (-not (Test-Path $earlyDir)) { New-Item -ItemType Directory $earlyDir -Force | Out-Null }
-    Add-Content $earlyLog "WARNING: Resilience.psm1 not found at $Script:_resPath" -Encoding UTF8
+    [System.IO.File]::AppendAllText($earlyLog, "WARNING: Resilience.psm1 not found at $Script:_resPath`r`n", [System.Text.Encoding]::UTF8)
 }
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ function Write-BootstrapLog {
     $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$ts] [$Level] $Message"
     $logFile = Join-Path $Script:LOG_DIR 'bootstrap.log'
-    Add-Content -Path $logFile -Value $line -Encoding UTF8
+    [System.IO.File]::AppendAllText($logFile, "$line`r`n", [System.Text.Encoding]::UTF8)
     Write-Host $line
 }
 
@@ -237,7 +237,7 @@ try {
     Write-Host $errMsg -ForegroundColor Red
     try {
         $logFile = Join-Path $Script:LOG_DIR 'bootstrap.log'
-        Add-Content -Path $logFile -Value $errMsg -Encoding UTF8
+        [System.IO.File]::AppendAllText($logFile, "$errMsg`r`n", [System.Text.Encoding]::UTF8)
     } catch { Write-Host "[Bootstrap] Log write failed: $($_.Exception.Message)" }
     exit 1
 }
