@@ -49,6 +49,7 @@ if (Test-Path $Script:_cfgPath) {
 $DEPLOY_ROOT  = if ($WD) { $WD.DeployRoot    } else { 'C:\ProgramData\WinDeploy' }
 $STATE_FILE   = if ($WD) { $WD.StateFile     } else { "$DEPLOY_ROOT\state.json" }
 $SESSION_LOG  = "$DEPLOY_ROOT\Logs\session.log"
+$MONITOR_LOG  = "$DEPLOY_ROOT\Logs\task_monitor.log"
 $TS_JSON      = if ($WD) { $WD.TailscaleJson } else { "$DEPLOY_ROOT\tailscale.json" }
 $STAGE_ORDER  = if ($WD) { @($WD.StageOrder) } else { @('WindowsUpdate','PowerSettings','Debloat','WinTweaks','InstallDellSupportAssist','InstallDellPowerManager','InstallTailscale','Cleanup') }
 $STAGE_LABELS = if ($WD) { $WD.StageLabels   } else { @{} }
@@ -80,6 +81,7 @@ try {
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid Margin="20">
       <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
@@ -180,6 +182,20 @@ try {
         <TextBlock x:Name="CloseCountdown" Text="" FontSize="10" Foreground="#555555" HorizontalAlignment="Right" VerticalAlignment="Center"/>
       </Grid>
 
+      <!-- Error panel: visible on any error, stays open, never auto-dismisses -->
+      <Border Grid.Row="9" x:Name="ErrorPanel" Visibility="Collapsed"
+              Background="#1F0E0E" BorderBrush="#5A2020" BorderThickness="1"
+              CornerRadius="5" Margin="0,8,0,0" Padding="12,10">
+        <StackPanel>
+          <TextBlock Text="MONITOR ERROR" FontSize="10" Foreground="#7A2020"
+                     FontFamily="Segoe UI" CharacterSpacing="80" Margin="0,0,0,6"/>
+          <TextBlock x:Name="ErrorText" Text="" FontSize="11" Foreground="#F87171"
+                     FontFamily="Consolas" TextWrapping="Wrap"/>
+          <TextBlock x:Name="ErrorLogPath" Text="" FontSize="10" Foreground="#555555"
+                     FontFamily="Consolas" Margin="0,6,0,0"/>
+        </StackPanel>
+      </Border>
+
     </Grid>
   </ScrollViewer>
 </Window>
@@ -206,6 +222,9 @@ $TailscaleStatusBorder= $Window.FindName('TailscaleStatusBorder')
 $LogPanel             = $Window.FindName('LogPanel')
 $FooterNote           = $Window.FindName('FooterNote')
 $CloseCountdown       = $Window.FindName('CloseCountdown')
+$ErrorPanel           = $Window.FindName('ErrorPanel')
+$ErrorText            = $Window.FindName('ErrorText')
+$ErrorLogPath         = $Window.FindName('ErrorLogPath')
 
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 $Window.Left = $screen.Right  - $Window.Width  - 20
@@ -273,6 +292,22 @@ function Add-StageRow ($Label, $Status, $Time) {
 }
 
 $Script:LastQrPath = $null
+
+function Show-MonitorError {
+    param([string]$Message)
+    # Write to log file
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "[$ts] [ERROR] $Message"
+    try { Add-Content -Path $MONITOR_LOG -Value $line -Encoding UTF8 } catch {}
+    try { Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8 } catch {}
+    # Show in UI - window stays open
+    try {
+        $ErrorText.Text    = $Message
+        $ErrorLogPath.Text = "Log: $MONITOR_LOG"
+        $ErrorPanel.Visibility = 'Visible'
+    } catch {}
+}
+
 function Load-QrImage ($QrPath) {
     if (-not $QrPath -or -not (Test-Path $QrPath) -or $QrPath -eq $Script:LastQrPath) { return }
     try {
@@ -397,19 +432,35 @@ function Update-UI {
 
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds($REFRESH_MS)
-$timer.Add_Tick({ try { Update-UI } catch { $FooterNote.Text = "Error: $($_.Exception.Message)" } })
+$timer.Add_Tick({ try { Update-UI } catch { Show-MonitorError "Refresh error: $($_.Exception.Message)" } })
 $Window.Add_Loaded({
     try { Update-UI } catch {
-        Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [ERROR] Monitor initial UI load failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue
-        $FooterNote.Text = "Startup error - check early.log"
+        Show-MonitorError "Startup error: $($_.Exception.Message)"
     }
     $timer.Start()
 })
 $Window.Add_Closed({ $timer.Stop() })
+
+# Write startup entry to monitor log before ShowDialog blocks
+$null = try {
+    $startLine = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Monitor started. PID:$PID User:$([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+    Add-Content -Path $MONITOR_LOG -Value $startLine -Encoding UTF8
+} catch {}
+
+# ShowDialog blocks until window closes. Any exception here is a WPF-level
+# crash (e.g. missing assembly) - log it and show a fallback MessageBox so
+# the user sees the error rather than the window silently disappearing.
 try {
     [void]$Window.ShowDialog()
 } catch {
     $crashMsg = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [FATAL] Monitor crashed: $($_.Exception.Message) Line:$($_.InvocationInfo.ScriptLineNumber)"
-    Add-Content -Path $Script:_rawLog -Value $crashMsg -Encoding UTF8 -ErrorAction SilentlyContinue
-    Add-Content -Path 'C:\ProgramData\WinDeploy\Logs\monitor_crash.log' -Value $crashMsg -Encoding UTF8 -ErrorAction SilentlyContinue
+    try { Add-Content -Path $MONITOR_LOG  -Value $crashMsg -Encoding UTF8 } catch {}
+    try { Add-Content -Path $Script:_rawLog -Value $crashMsg -Encoding UTF8 } catch {}
+    # Show a Windows MessageBox since the WPF window is gone
+    [System.Windows.MessageBox]::Show(
+        "WinDeploy Monitor crashed:`n`n$($_.Exception.Message)`n`nCheck: $MONITOR_LOG",
+        'WinDeploy Monitor Error',
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Error
+    ) | Out-Null
 }
