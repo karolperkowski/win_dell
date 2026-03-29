@@ -21,29 +21,22 @@ jobs:
       - name: Generate manifest.json
         shell: pwsh
         env:
-          MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # ── Resolve commit SHA ──
           $commitSha = (git rev-parse HEAD).Trim()
           Write-Host "Commit SHA: $commitSha"
 
-          # ── Download the branch ZIP and compute its hash ──
-          # We download exactly the same URL that install.ps1 uses so the
-          # hash is always for what clients will actually receive.
-          $zipUrl  = "https://github.com/${{ github.repository }}/archive/refs/heads/main.zip"
+          $zipUrl  = "https://github.com/${{ github.repository }}/archive/$commitSha.zip"
           $zipPath = Join-Path $env:TEMP 'release.zip'
-
           Write-Host "Downloading ZIP: $zipUrl"
           Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
-
           $zipHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
           Write-Host "ZIP SHA-256: $zipHash"
-
           Remove-Item $zipPath -Force
 
-          # ── Build manifest body ──
           $manifest = [ordered]@{
             schema_version = 1
             repository     = '${{ github.repository }}'
@@ -54,31 +47,26 @@ jobs:
             generated_at   = (Get-Date -Format 'o')
           }
           $manifestJson = $manifest | ConvertTo-Json -Depth 3
+          $manifestJson | Set-Content -Path 'manifest.json' -Encoding UTF8
 
-          # ── Sign with HMAC-SHA256 ──
-          # The signing key comes from a GitHub secret so it never appears
-          # in logs or the repo. install.ps1 embeds the same key to verify.
-          if (-not $env:MANIFEST_SIGNING_KEY) {
-            Write-Warning 'MANIFEST_SIGNING_KEY secret is not set.'
-            Write-Warning 'Go to repo Settings -> Secrets -> Actions and add it.'
-            Write-Warning 'Skipping manifest signing - placeholder values will remain.'
+          if (-not $env:GPG_PRIVATE_KEY) {
+            Write-Warning 'GPG_PRIVATE_KEY secret not set - skipping signature.'
+            'pending' | Set-Content -Path 'manifest.sig' -Encoding UTF8
             exit 0
           }
 
-          $keyBytes  = [System.Text.Encoding]::UTF8.GetBytes($env:MANIFEST_SIGNING_KEY)
-          $msgBytes  = [System.Text.Encoding]::UTF8.GetBytes($manifestJson)
-          $hmac      = [System.Security.Cryptography.HMACSHA256]::new($keyBytes)
-          $sigBytes  = $hmac.ComputeHash($msgBytes)
-          $signature = ($sigBytes | ForEach-Object { $_.ToString('x2') }) -join ''
-          $hmac.Dispose()
+          # Import the private key into the runner's GPG keyring
+          $env:GPG_PRIVATE_KEY | gpg --batch --import
+          if ($LASTEXITCODE -ne 0) { throw "GPG key import failed" }
 
-          Write-Host "Signature: $signature"
+          # Sign the manifest - output detached ASCII signature
+          echo $env:GPG_PASSPHRASE | gpg --batch --yes --passphrase-fd 0 `
+              --armor --detach-sign manifest.json
+          if ($LASTEXITCODE -ne 0) { throw "GPG signing failed" }
 
-          # ── Write files ──
-          $manifestJson | Set-Content -Path 'manifest.json' -Encoding UTF8
-          $signature    | Set-Content -Path 'manifest.sig'  -Encoding UTF8
-
-          Write-Host 'manifest.json and manifest.sig written.'
+          # gpg --detach-sign creates manifest.json.asc - rename to manifest.sig
+          Move-Item manifest.json.asc manifest.sig -Force
+          Write-Host "Manifest signed with GPG."
 
       - name: Commit manifest back to repo
         shell: bash

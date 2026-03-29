@@ -73,10 +73,12 @@ $REPO_NAME     = 'win_dell'
 $MANIFEST_URL  = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/manifest.json"
 $SIG_URL       = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/manifest.sig"
 
-# HMAC-SHA256 signing key — must match the MANIFEST_SIGNING_KEY GitHub secret.
-# This is the only value that must be manually kept in sync if you rotate the key.
-# To generate a new key: -join ((1..40) | % { [char](Get-Random -Min 33 -Max 127) })
-$MANIFEST_SIGNING_KEY = '@MM_}+tx9@=>Iopjv^]U;PiBYTUd5!8Fh{I[*jmA'
+# Public key fingerprint - paste your public key here after running docs/gpg-setup.md
+# This is the ONLY value that must be updated when you rotate your GPG key.
+# The private key never leaves your machine or GitHub Secrets.
+$GPG_PUBLIC_KEY = @'
+REPLACE_WITH_YOUR_GPG_PUBLIC_KEY_BLOCK
+'@
 $REPO_DIR     = Join-Path $InstallRoot 'repo'
 $TEMP_SCRIPT  = Join-Path $env:TEMP 'windeploy_install.ps1'
 
@@ -107,12 +109,10 @@ function Get-VerifiedManifest {
 
     $obj = $manifestJson | ConvertFrom-Json
 
-    # Placeholder manifest means the GitHub Action hasn't run yet.
-    # Requires workflow scope on the PAT - skip verification and use
-    # the branch ZIP directly. Verification activates once the Action runs.
-    if ($obj.zip_sha256 -eq 'pending' -or $obj.commit_sha -eq 'pending') {
-        Write-InstallLog 'Manifest is placeholder - skipping signature check.' WARN
-        Write-InstallLog 'Add workflow scope to PAT to enable integrity verification.' WARN
+    # Placeholder manifest: GitHub Action hasn't run yet (needs GPG_PRIVATE_KEY secret)
+    if ($obj.zip_sha256 -eq 'pending' -or $obj.commit_sha -eq 'pending' -or $remoteSig -eq 'pending') {
+        Write-InstallLog 'Manifest is placeholder - signature check skipped until GPG key is configured.' WARN
+        Write-InstallLog 'See docs/gpg-setup.md to generate your signing key.' WARN
         return @{
             CommitSha   = 'main'
             ZipUrl      = "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/main.zip"
@@ -121,19 +121,34 @@ function Get-VerifiedManifest {
         }
     }
 
-    # Verify HMAC-SHA256 signature
-    $keyBytes  = [System.Text.Encoding]::UTF8.GetBytes($MANIFEST_SIGNING_KEY)
-    $msgBytes  = [System.Text.Encoding]::UTF8.GetBytes($manifestJson)
-    $hmac      = [System.Security.Cryptography.HMACSHA256]::new($keyBytes)
-    $computed  = ($hmac.ComputeHash($msgBytes) | ForEach-Object { $_.ToString('x2') }) -join ''
-    $hmac.Dispose()
+    # GPG not configured yet - skip verification
+    if ($GPG_PUBLIC_KEY -like '*REPLACE_WITH*') {
+        Write-InstallLog 'GPG public key not configured - skipping signature verification.' WARN
+        Write-InstallLog 'Run docs/gpg-setup.md then paste your public key into install.ps1.' WARN
+    } else {
+        # Import public key and verify signature
+        $gpgAvailable = Get-Command gpg -ErrorAction SilentlyContinue
+        if ($gpgAvailable) {
+            $pubKeyFile  = Join-Path $env:TEMP 'windeploy_pub.asc'
+            $manifestFile= Join-Path $env:TEMP 'windeploy_manifest.json'
+            $sigFile     = Join-Path $env:TEMP 'windeploy_manifest.sig'
 
-    if ($computed -ne $remoteSig) {
-        throw "Manifest signature INVALID. Expected: $computed  Got: $remoteSig`n" +
-              "The manifest may have been tampered with or the signing key is out of sync."
+            $GPG_PUBLIC_KEY       | Set-Content $pubKeyFile   -Encoding UTF8
+            $manifestJson         | Set-Content $manifestFile -Encoding UTF8
+            [System.IO.File]::WriteAllText($sigFile, $remoteSig)
+
+            & gpg --batch --import $pubKeyFile 2>$null | Out-Null
+            $verifyResult = & gpg --batch --verify $sigFile $manifestFile 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Manifest GPG signature INVALID.`n$verifyResult`nThe manifest may have been tampered with."
+            }
+            Write-InstallLog 'Manifest GPG signature verified.' OK
+
+            Remove-Item $pubKeyFile, $manifestFile, $sigFile -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-InstallLog 'gpg not found on PATH - skipping signature verification.' WARN
+        }
     }
-
-    Write-InstallLog 'Manifest signature verified.' OK
 
     return @{
         CommitSha   = $obj.commit_sha

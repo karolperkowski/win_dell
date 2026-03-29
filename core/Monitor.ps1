@@ -128,19 +128,19 @@ try {
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Border Background="#1A1A1A" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="5" Padding="12,10" Margin="0,0,6,0">
           <StackPanel>
-            <TextBlock Text="ELAPSED" FontSize="10" Foreground="#555555" CharacterSpacing="80"/>
+            <TextBlock Text="ELAPSED" FontSize="10" Foreground="#555555"/>
             <TextBlock x:Name="ElapsedLabel" Text="00:00:00" FontSize="20" Foreground="#E0E0E0" Margin="0,4,0,0" FontFamily="Consolas"/>
           </StackPanel>
         </Border>
         <Border Grid.Column="1" Background="#1A1A1A" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="5" Padding="12,10" Margin="3,0,3,0">
           <StackPanel>
-            <TextBlock Text="REBOOTS" FontSize="10" Foreground="#555555" CharacterSpacing="80"/>
+            <TextBlock Text="REBOOTS" FontSize="10" Foreground="#555555"/>
             <TextBlock x:Name="RebootLabel" Text="0" FontSize="20" Foreground="#E0E0E0" Margin="0,4,0,0" FontFamily="Consolas"/>
           </StackPanel>
         </Border>
         <Border Grid.Column="2" Background="#1A1A1A" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="5" Padding="12,10" Margin="6,0,0,0">
           <StackPanel>
-            <TextBlock Text="STAGE" FontSize="10" Foreground="#555555" CharacterSpacing="80"/>
+            <TextBlock Text="STAGE" FontSize="10" Foreground="#555555"/>
             <TextBlock x:Name="StageCountLabel" Text="- / -" FontSize="20" Foreground="#E0E0E0" Margin="0,4,0,0" FontFamily="Consolas"/>
           </StackPanel>
         </Border>
@@ -159,7 +159,7 @@ try {
       </Grid>
 
       <!-- Stages label -->
-      <TextBlock Grid.Row="3" Text="STAGES" FontSize="10" Foreground="#444444" CharacterSpacing="80" Margin="0,0,0,8"/>
+      <TextBlock Grid.Row="3" Text="STAGES" FontSize="10" Foreground="#444444" Margin="0,0,0,8"/>
 
       <!-- Stages list -->
       <StackPanel Grid.Row="4" x:Name="StagesPanel" Margin="0,0,0,16"/>
@@ -174,7 +174,7 @@ try {
             <Image x:Name="QrImage" Width="124" Height="124" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
           </Border>
           <StackPanel Grid.Column="1" Margin="16,2,0,0" VerticalAlignment="Center">
-            <TextBlock Text="TAILSCALE REGISTRATION" FontSize="10" Foreground="#2A4870" CharacterSpacing="80" Margin="0,0,0,8"/>
+            <TextBlock Text="TAILSCALE REGISTRATION" FontSize="10" Foreground="#2A4870" Margin="0,0,0,8"/>
             <TextBlock Text="Scan with the Tailscale app to register this machine."
                        FontSize="12" Foreground="#506080" TextWrapping="Wrap" Margin="0,0,0,10"/>
             <TextBlock x:Name="TailscaleUrlText" Text="" FontSize="10"
@@ -188,7 +188,7 @@ try {
       </Border>
 
       <!-- Log -->
-      <TextBlock Grid.Row="6" Text="RECENT ACTIVITY" FontSize="10" Foreground="#444444" CharacterSpacing="80" Margin="0,0,0,8"/>
+      <TextBlock Grid.Row="6" Text="RECENT ACTIVITY" FontSize="10" Foreground="#444444" Margin="0,0,0,8"/>
       <Border Grid.Row="7" Background="#0A0A0A" BorderBrush="#1E1E1E" BorderThickness="1" CornerRadius="5" Padding="12,10" Height="100">
         <StackPanel x:Name="LogPanel"/>
       </Border>
@@ -205,7 +205,7 @@ try {
               CornerRadius="5" Margin="0,8,0,0" Padding="12,10">
         <StackPanel>
           <TextBlock Text="MONITOR ERROR" FontSize="10" Foreground="#7A2020"
-                     FontFamily="Segoe UI" CharacterSpacing="80" Margin="0,0,0,6"/>
+                     FontFamily="Segoe UI" Margin="0,0,0,6"/>
           <TextBlock x:Name="ErrorText" Text="" FontSize="11" Foreground="#F87171"
                      FontFamily="Consolas" TextWrapping="Wrap"/>
           <TextBlock x:Name="ErrorLogPath" Text="" FontSize="10" Foreground="#555555"
