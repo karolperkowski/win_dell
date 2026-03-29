@@ -294,10 +294,21 @@ function Invoke-StatePropertyCheck {
     $monitorLines = Get-Content $monitorPs1
     $schemaKeys = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($ln in $stateLines) {
-        # Match $state['KeyName'] = ...
+        # Match $state['KeyName'] = ... (authoritative write pattern)
         if ($ln -match '\$state\[''([A-Za-z][A-Za-z0-9]+)''\]') { $null = $schemaKeys.Add($Matches[1]) }
-        # Match indented PascalCase key assignments in the schema template
-        if ($ln -match '^\s{6,12}([A-Z][a-zA-Z0-9]+)\s*=\s') { $null = $schemaKeys.Add($Matches[1]) }
+    }
+    # Also pick up keys from the initialState template block only
+    # (scoped to the block - avoids false positives from PSCustomObject returns elsewhere)
+    $inInitBlock = $false
+    $initDepth   = 0
+    foreach ($ln in $stateLines) {
+        if ($ln -match '\$initialState\s*=\s*\[ordered\]@\{') { $inInitBlock = $true; $initDepth = 1; continue }
+        if ($inInitBlock) {
+            $initDepth += ([regex]::Matches($ln, '\{')).Count
+            $initDepth -= ([regex]::Matches($ln, '\}')).Count
+            if ($initDepth -le 0) { $inInitBlock = $false; continue }
+            if ($ln -match '^\s+([A-Z][A-Za-z0-9]+)\s*=') { $null = $schemaKeys.Add($Matches[1]) }
+        }
     }
 
     # --- Extract keys bootstrap.ps1 writes in the initial state ---
