@@ -48,6 +48,23 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
 
+# Maximise the console window immediately so progress is easy to read.
+# Works on the current window (irm|iex run) and on the elevated relaunch
+# because we also pass -WindowStyle Maximized to Start-Process.
+function Expand-ConsoleWindow {
+    try {
+        $sig = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);' +
+               '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'
+        Add-Type -MemberDefinition $sig -Name 'WinHelper' -Namespace 'WinDeploy' -ErrorAction Stop
+        $hwnd = [WinDeploy.WinHelper]::GetConsoleWindow()
+        if ($hwnd -ne [IntPtr]::Zero) {
+            [WinDeploy.WinHelper]::ShowWindow($hwnd, 3) | Out-Null  # SW_MAXIMIZE = 3
+        }
+    } catch { <# non-fatal - carry on if console handle unavailable #> }
+}
+
+Expand-ConsoleWindow
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -151,9 +168,9 @@ function Invoke-ElevatedRelaunch {
 
     $scriptContent | Set-Content -Path $TEMP_SCRIPT -Encoding UTF8
 
-    $argList = "-ExecutionPolicy Bypass -File `"$TEMP_SCRIPT`" -Branch `"$Branch`" -InstallRoot `"$InstallRoot`" -Elevated"
+    $argList = "-ExecutionPolicy Bypass -WindowStyle Maximized -File `"$TEMP_SCRIPT`" -Branch `"$Branch`" -InstallRoot `"$InstallRoot`" -Elevated"
     if ($Update) { $argList += ' -Update' }
-    Start-Process powershell.exe -ArgumentList $argList -Verb RunAs
+    Start-Process powershell.exe -ArgumentList $argList -Verb RunAs -WindowStyle Maximized
     Write-InstallLog 'Elevated process launched. This window can be closed.' OK
     exit 0
 }
