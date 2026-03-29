@@ -119,72 +119,66 @@ function Assert-StateFileIntegrity {
 # Called by bootstrap AND by the orchestrator on every run.
 # ---------------------------------------------------------------------------
 function Assert-ScheduledTasks {
-    param(
-        # Path to the local repo - defaults to standard deploy location
-        [string]$RepoRoot = $Script:REPO_DIR
-    )
+    param([string]$RepoRoot = $Script:REPO_DIR)
 
     if (-not (Test-Path $RepoRoot)) {
-        Write-ResilienceLog "Repo not found at $RepoRoot - cannot validate tasks." WARN
+        Write-ResilienceLog "Repo not found at '$RepoRoot' - cannot register tasks." ERROR
         return
     }
 
-    $orchestratorPath = Join-Path $RepoRoot 'core\Orchestrator.ps1'
-    $monitorPath      = Join-Path $RepoRoot 'core\Monitor.ps1'
-    $notifyPath       = Join-Path $RepoRoot 'core\Notify.ps1'
-
-    # Task definitions: name, script, run-as, window style
     $taskDefs = @(
         @{
             Name        = $Script:TASK_RESUME
-            Script      = $orchestratorPath
+            Script      = Join-Path $RepoRoot 'core\Orchestrator.ps1'
+            Args        = '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass'
             Principal   = 'SYSTEM'
-            WindowStyle = 'Hidden'
             Triggers    = @('Boot', 'Logon')
+            TimeLimit   = 4
             Description = 'WinDeploy orchestrator - runs deployment stages'
         },
         @{
             Name        = $Script:TASK_MONITOR
-            Script      = $monitorPath
+            Script      = Join-Path $RepoRoot 'core\Monitor.ps1'
+            Args        = '-WindowStyle Normal -ExecutionPolicy Bypass'
             Principal   = 'Users'
-            WindowStyle = 'Normal'
             Triggers    = @('Logon')
+            TimeLimit   = 4
             Description = 'WinDeploy monitor - shows deployment progress'
         },
         @{
             Name        = $Script:TASK_NOTIFY
-            Script      = $notifyPath
+            Script      = Join-Path $RepoRoot 'core\Notify.ps1'
+            Args        = '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass'
             Principal   = 'Users'
-            WindowStyle = 'Hidden'
             Triggers    = @('Logon')
+            TimeLimit   = 0.033   # 2 minutes
             Description = 'WinDeploy notify - tray notification on completion'
         }
     )
 
     foreach ($def in $taskDefs) {
-        $existing = Get-ScheduledTask -TaskName $def.Name -ErrorAction SilentlyContinue
+        # Verify the script file exists - hard error, not a silent skip
+        if (-not (Test-Path $def.Script)) {
+            Write-ResilienceLog "CANNOT register '$($def.Name)' - script not found: $($def.Script)" ERROR
+            continue
+        }
 
-        # Skip if task exists AND its script path is correct
+        # Check if already registered with the correct script path
+        $existing = Get-ScheduledTask -TaskName $def.Name -ErrorAction SilentlyContinue
         if ($existing) {
-            $currentExe = $existing.Actions[0].Execute
             $currentArgs = $existing.Actions[0].Arguments
             if ($currentArgs -like "*$($def.Script)*") {
                 Write-ResilienceLog "Task '$($def.Name)' OK." OK
                 continue
             }
-            Write-ResilienceLog "Task '$($def.Name)' has wrong path - re-registering." WARN
+            Write-ResilienceLog "Task '$($def.Name)' has stale path - replacing." WARN
             Unregister-ScheduledTask -TaskName $def.Name -Confirm:$false -ErrorAction SilentlyContinue
         } else {
             Write-ResilienceLog "Task '$($def.Name)' missing - registering." WARN
         }
 
-        if (-not (Test-Path $def.Script)) {
-            Write-ResilienceLog "Script not found for task '$($def.Name)': $($def.Script)" ERROR
-            continue
-        }
-
         try {
-            $argString = "-NonInteractive -WindowStyle $($def.WindowStyle) -ExecutionPolicy Bypass -File `"$($def.Script)`""
+            $argString = "$($def.Args) -File `"$($def.Script)`""
             $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
 
             $triggers = @()
@@ -198,27 +192,41 @@ function Assert-ScheduledTasks {
             $principal = if ($def.Principal -eq 'SYSTEM') {
                 New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
             } else {
-                New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -RunLevel Limited
+                # LogonType Interactive is required for tasks that show UI on the desktop.
+                # GroupId BUILTIN\Users means it runs for whoever is logged in.
+                New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -LogonType Interactive -RunLevel Limited
             }
 
+            $limitHours = [int]([Math]::Ceiling($def.TimeLimit))
+            $limitMins  = [int](($def.TimeLimit - [Math]::Floor($def.TimeLimit)) * 60)
+            $timeLimit  = New-TimeSpan -Hours ([Math]::Floor($def.TimeLimit)) -Minutes $limitMins
+
             $settings = New-ScheduledTaskSettingsSet `
-                -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
-                -MultipleInstances IgnoreNew `
+                -ExecutionTimeLimit    $timeLimit `
+                -MultipleInstances     IgnoreNew `
                 -StartWhenAvailable `
                 -RunOnlyIfNetworkAvailable:$false
 
             Register-ScheduledTask `
-                -TaskName   $def.Name `
-                -Action     $action `
-                -Trigger    $triggers `
-                -Principal  $principal `
-                -Settings   $settings `
+                -TaskName    $def.Name `
+                -TaskPath    '\' `
+                -Action      $action `
+                -Trigger     $triggers `
+                -Principal   $principal `
+                -Settings    $settings `
                 -Description $def.Description `
                 -Force | Out-Null
 
-            Write-ResilienceLog "Task '$($def.Name)' registered." OK
+            # Post-registration verification - don't trust Register-ScheduledTask's exit code
+            $check = Get-ScheduledTask -TaskName $def.Name -ErrorAction SilentlyContinue
+            if ($check) {
+                Write-ResilienceLog "Task '$($def.Name)' registered and verified." OK
+            } else {
+                Write-ResilienceLog "Task '$($def.Name)' registration FAILED silently - task not found after Register-ScheduledTask." ERROR
+            }
+
         } catch {
-            Write-ResilienceLog "Failed to register task '$($def.Name)': $($_.Exception.Message)" ERROR
+            Write-ResilienceLog "Task '$($def.Name)' registration threw: $($_.Exception.Message)" ERROR
         }
     }
 }

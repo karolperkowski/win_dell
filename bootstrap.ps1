@@ -101,131 +101,6 @@ function Copy-RepoToDeployRoot {
     return $dest
 }
 
-function Register-ResumeTask {
-    <#
-    Creates a scheduled task that runs the orchestrator at every logon/startup
-    until the deployment marks itself complete. The task is removed by the
-    orchestrator once all stages finish.
-    #>
-    param([string]$LocalRepoRoot)
-
-    # Remove any stale task from a previous run
-    Unregister-ScheduledTask -TaskName $Script:TASK_NAME -Confirm:$false -ErrorAction SilentlyContinue
-
-    $orchestratorPath = Join-Path $LocalRepoRoot 'core\Orchestrator.ps1'
-    $action = New-ScheduledTaskAction `
-        -Execute 'powershell.exe' `
-        -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$orchestratorPath`""
-
-    # Trigger 1: at system startup (catches machine-level reboots)
-    $triggerBoot = New-ScheduledTaskTrigger -AtStartup
-
-    # Trigger 2: at any user logon (catches interactive sessions)
-    $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
-
-    # Run as SYSTEM so no credential prompt is ever shown
-    $principal = New-ScheduledTaskPrincipal `
-        -UserId 'SYSTEM' `
-        -LogonType ServiceAccount `
-        -RunLevel Highest
-
-    $settings = New-ScheduledTaskSettingsSet `
-        -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
-        -MultipleInstances IgnoreNew `
-        -StartWhenAvailable `
-        -RunOnlyIfNetworkAvailable:$false
-
-    Register-ScheduledTask `
-        -TaskName  $Script:TASK_NAME `
-        -Action    $action `
-        -Trigger   @($triggerBoot, $triggerLogon) `
-        -Principal $principal `
-        -Settings  $settings `
-        -Description 'WinDeploy post-install automation resume task' `
-        -Force | Out-Null
-
-    Write-Host "[Bootstrap] Scheduled task '$($Script:TASK_NAME)' registered."
-}
-
-function Register-MonitorTask {
-    <#
-    Creates a scheduled task that shows the WPF monitor window at every logon.
-    Unlike the orchestrator task (which runs as SYSTEM, hidden), this task runs
-    as the interactive user so the window is visible on the desktop.
-    #>
-    param([string]$LocalRepoRoot)
-
-    $monitorTaskName = 'WinDeploy-Monitor'
-    Unregister-ScheduledTask -TaskName $monitorTaskName -Confirm:$false -ErrorAction SilentlyContinue
-
-    $monitorPath = Join-Path $LocalRepoRoot 'core\Monitor.ps1'
-    $action = New-ScheduledTaskAction `
-        -Execute 'powershell.exe' `
-        -Argument "-ExecutionPolicy Bypass -WindowStyle Normal -File `"$monitorPath`""
-
-    # Logon trigger only - the window should appear when a user logs in,
-    # not at bare startup when there is no desktop to display it on
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-
-    # Run as interactive user (whoever logs on), not SYSTEM
-    # This is what makes the window appear on the desktop
-    $principal = New-ScheduledTaskPrincipal `
-        -GroupId 'BUILTIN\Users' `
-        -RunLevel Limited
-
-    $settings = New-ScheduledTaskSettingsSet `
-        -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
-        -MultipleInstances IgnoreNew `
-        -StartWhenAvailable
-
-    Register-ScheduledTask `
-        -TaskName   $monitorTaskName `
-        -Action     $action `
-        -Trigger    $trigger `
-        -Principal  $principal `
-        -Settings   $settings `
-        -Description 'WinDeploy deployment progress monitor (visible window)' `
-        -Force | Out-Null
-
-    Write-Host "[Bootstrap] Monitor task '$monitorTaskName' registered."
-}
-
-function Register-NotifyTask {
-    <#
-    Registers WinDeploy-Notify — a lightweight logon task that checks whether
-    the deployment tasks are gone and, if so, shows a tray notification.
-    Unlike Resume and Monitor, this task is NOT removed by Cleanup.
-    It intentionally survives the final reboot, fires once, then removes itself.
-    #>
-    param([string]$LocalRepoRoot)
-
-    $notifyTaskName = 'WinDeploy-Notify'
-    Unregister-ScheduledTask -TaskName $notifyTaskName -Confirm:$false -ErrorAction SilentlyContinue
-
-    $notifyPath = Join-Path $LocalRepoRoot 'core\Notify.ps1'
-    $action = New-ScheduledTaskAction `
-        -Execute    'powershell.exe' `
-        -Argument   "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$notifyPath`""
-
-    $trigger   = New-ScheduledTaskTrigger -AtLogOn
-    $principal = New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -RunLevel Limited
-    $settings  = New-ScheduledTaskSettingsSet `
-        -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
-        -MultipleInstances IgnoreNew `
-        -StartWhenAvailable
-
-    Register-ScheduledTask `
-        -TaskName   $notifyTaskName `
-        -Action     $action `
-        -Trigger    $trigger `
-        -Principal  $principal `
-        -Settings   $settings `
-        -Description 'WinDeploy post-deployment tray notification (self-removing)' `
-        -Force | Out-Null
-
-    Write-Host "[Bootstrap] Notify task '$notifyTaskName' registered."
-}
-
 function Set-AutoLogon {
     <#
     Configures the built-in Administrator account for automatic logon so
@@ -270,26 +145,26 @@ try {
         Invoke-SelfElevation
     }
 
-    # Step 2 - Resilience checks: directories, state file integrity, task validation
-    if (Get-Command Invoke-ResilienceChecks -ErrorAction SilentlyContinue) {
-        Invoke-ResilienceChecks -CalledFrom 'bootstrap' -RepoRoot $RepoRoot
+    # Step 2 - Directories (raw, before resilience module may be available)
+    foreach ($dir in @($Script:DEPLOY_ROOT, $Script:LOG_DIR)) {
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     }
 
     Write-BootstrapLog 'Bootstrap started.'
     Write-BootstrapLog "Source repo: $RepoRoot"
     Write-BootstrapLog "OS: $($(Get-CimInstance Win32_OperatingSystem).Caption)"
 
-    # Step 3 - Copy repo to a stable local path
+    # Step 3 - Copy repo to stable local path FIRST so all script paths are valid
     $localRepo = Copy-RepoToDeployRoot
 
-    # Step 4 - State file: write initial marker so orchestrator knows it was bootstrapped
+    # Step 4 - State file
     if (-not (Test-Path $Script:STATE_FILE)) {
         $initialState = [ordered]@{
             SchemaVersion    = 1
             BootstrappedAt   = (Get-Date -Format 'o')
             RepoRoot         = $localRepo
             ConfigFile       = Join-Path $localRepo 'config\settings.json'
-            CurrentStage     = 'WindowsUpdate'
+            CurrentStage     = 'PowerSettings'
             CompletedStages  = @()
             LastError        = $null
             DeployComplete   = $false
@@ -298,21 +173,19 @@ try {
             Set-Content -Path $Script:STATE_FILE -Encoding UTF8
         Write-BootstrapLog "State file created: $($Script:STATE_FILE)"
     } else {
-        Write-BootstrapLog "State file already exists - resuming existing deployment."
+        Write-BootstrapLog 'State file already exists - resuming existing deployment.'
     }
 
-    # Step 5 - Auto-logon (disable it ONLY if you need interactive sign-in;
-    # comment out the call if your imaging process already handles this)
+    # Step 5 - Auto-logon
     Set-AutoLogon -Username 'Administrator' -Password ''
 
-    # Step 6 - Register resume task (hidden, SYSTEM)
-    Register-ResumeTask -LocalRepoRoot $localRepo
-
-    # Step 6b - Register monitor task (visible window, interactive user)
-    Register-MonitorTask -LocalRepoRoot $localRepo
-
-    # Step 6c - Register notify task (tray notification after deployment completes)
-    Register-NotifyTask -LocalRepoRoot $localRepo
+    # Step 6 - Resilience checks: validates dirs, state, registers ALL tasks.
+    # Must run AFTER Copy-RepoToDeployRoot so script paths resolve correctly.
+    if (Get-Command Invoke-ResilienceChecks -ErrorAction SilentlyContinue) {
+        Invoke-ResilienceChecks -CalledFrom 'bootstrap' -RepoRoot $localRepo
+    } else {
+        Write-BootstrapLog 'WARNING: Resilience module not available - tasks may not be registered.' WARN
+    }
 
     # Step 7 - Kick off orchestrator immediately without waiting for a reboot
     Write-BootstrapLog 'Launching orchestrator for first run...'
