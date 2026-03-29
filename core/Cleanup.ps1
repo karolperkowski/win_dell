@@ -71,12 +71,20 @@ try {
 
     # Remove resume task
     Unregister-ScheduledTask -TaskName $TASK_NAME -Confirm:$false -ErrorAction SilentlyContinue
-    Write-LogSuccess "Scheduled task '$TASK_NAME' removed."
+    if (Get-ScheduledTask -TaskName $TASK_NAME -ErrorAction SilentlyContinue) {
+        Write-LogWarning "Scheduled task '$TASK_NAME' still present after unregister attempt."
+    } else {
+        Write-LogSuccess "Scheduled task '$TASK_NAME' removed."
+    }
 
     # Remove monitor task - it auto-closes its own window when DeployComplete = true,
     # but we also unregister the task so it doesn't re-launch after the final reboot
     Unregister-ScheduledTask -TaskName 'WinDeploy-Monitor' -Confirm:$false -ErrorAction SilentlyContinue
-    Write-LogSuccess "Scheduled task 'WinDeploy-Monitor' removed."
+    if (Get-ScheduledTask -TaskName 'WinDeploy-Monitor' -ErrorAction SilentlyContinue) {
+        Write-LogWarning "Scheduled task 'WinDeploy-Monitor' still present after unregister attempt."
+    } else {
+        Write-LogSuccess "Scheduled task 'WinDeploy-Monitor' removed."
+    }
 
     # Disable auto-logon and restore UAC
     $winlogon   = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'

@@ -8,7 +8,7 @@
     Polls state.json every 3 seconds. Shows stage status, metrics, live log tail.
     When InstallTailscale is the current stage, displays the QR code and auth URL
     so the machine can be registered without a keyboard.
-    Auto-closes 30 seconds after DeployComplete = true.
+    Auto-closes 60 seconds after DeployComplete = true. A Close button appears on completion.
 #>
 
 [CmdletBinding()]
@@ -88,7 +88,7 @@ $TS_JSON      = if ($WD) { $WD.TailscaleJson } else { "$DEPLOY_ROOT\tailscale.js
 $STAGE_ORDER  = if ($WD) { @($WD.StageOrder) } else { @('WindowsUpdate','PowerSettings','Debloat','WinTweaks','InstallDellSupportAssist','InstallDellPowerManager','InstallTailscale','Cleanup') }
 $STAGE_LABELS = if ($WD) { $WD.StageLabels   } else { @{} }
 $REFRESH_MS   = 3000
-$CLOSE_DELAY  = 30
+$CLOSE_DELAY  = 60
 
 
 
@@ -229,6 +229,9 @@ try {
         <StackPanel Grid.Column="1" Orientation="Horizontal">
           <TextBlock x:Name="CloseCountdown" Text="" FontSize="10" Foreground="#555555"
                      VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <Button x:Name="CloseBtn" Content="✕ Close" FontSize="10" Padding="8,3"
+                  Background="#1A2030" Foreground="#4ADE80" BorderBrush="#2D4A2D"
+                  Cursor="Hand" Visibility="Collapsed" ToolTip="Close the monitor window" Margin="0,0,8,0"/>
           <Button x:Name="RunNowBtn" Content="▶ Run Now" FontSize="10" Padding="8,3"
                   Background="#1A2030" Foreground="#60A5FA" BorderBrush="#1A3050"
                   Cursor="Hand" ToolTip="Start the orchestrator immediately without waiting for a reboot"/>
@@ -294,6 +297,7 @@ $TailscaleStatusBorder= $Window.FindName('TailscaleStatusBorder')
 $LogPanel             = $Window.FindName('LogPanel')
 $FooterNote           = $Window.FindName('FooterNote')
 $CloseCountdown       = $Window.FindName('CloseCountdown')
+$CloseBtn             = $Window.FindName('CloseBtn')
 $RunNowBtn            = $Window.FindName('RunNowBtn')
 $ErrorPanel           = $Window.FindName('ErrorPanel')
 $ErrorText            = $Window.FindName('ErrorText')
@@ -523,6 +527,7 @@ function Update-UI {
         $remaining = $CLOSE_DELAY - [int]((Get-Date) - $Script:CompletionTime).TotalSeconds
         if ($remaining -le 0) { $Window.Close(); return }
         $CloseCountdown.Text = "Closing in $remaining s"
+        $CloseBtn.Visibility = 'Visible'
     } else {
         $lbl = if ($STAGE_LABELS[(Get-StateProp $state 'CurrentStage' '')]) { $STAGE_LABELS[(Get-StateProp $state 'CurrentStage' '')] } else { '...' }
         $StatusBadge.Text         = $lbl
@@ -601,6 +606,8 @@ $VersionLabel.Add_MouseLeftButtonUp({
         try { Start-Process $Script:CommitUrl } catch {}
     }
 })
+
+$CloseBtn.Add_Click({ $Window.Close() })
 
 $RunNowBtn.Add_Click({
     try {

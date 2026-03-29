@@ -101,8 +101,13 @@ function Set-DarkTheme {
     if (Test-Path $defaultHive) {
         try {
             reg.exe load 'HKU\WinDeploy_Default' $defaultHive 2>$null
-            Set-Reg 'Registry::HKU\WinDeploy_Default\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'AppsUseLightTheme'   0
-            Set-Reg 'Registry::HKU\WinDeploy_Default\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'SystemUsesLightTheme' 0
+            if ($LASTEXITCODE -ne 0) {
+                Write-LogWarning "  Failed to load default user hive for dark theme (exit $LASTEXITCODE). Skipping."
+            } else {
+                Set-Reg 'Registry::HKU\WinDeploy_Default\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'AppsUseLightTheme'   0
+                Set-Reg 'Registry::HKU\WinDeploy_Default\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'SystemUsesLightTheme' 0
+                Write-LogInfo '  Default user hive updated for dark theme.'
+            }
         } finally {
             [gc]::Collect()
             reg.exe unload 'HKU\WinDeploy_Default' 2>$null
@@ -135,7 +140,12 @@ function Set-NumLockOn {
     if (Test-Path $defaultHive) {
         try {
             reg.exe load 'HKU\WinDeploy_Default' $defaultHive 2>$null
-            Set-Reg 'Registry::HKU\WinDeploy_Default\Control Panel\Keyboard' 'InitialKeyboardIndicators' '2' String
+            if ($LASTEXITCODE -ne 0) {
+                Write-LogWarning "  Failed to load default user hive for NumLock (exit $LASTEXITCODE). Skipping."
+            } else {
+                Set-Reg 'Registry::HKU\WinDeploy_Default\Control Panel\Keyboard' 'InitialKeyboardIndicators' '2' String
+                Write-LogInfo '  Default user hive updated for NumLock.'
+            }
         } finally {
             [gc]::Collect()
             reg.exe unload 'HKU\WinDeploy_Default' 2>$null
@@ -188,9 +198,13 @@ function Set-DisplayScale {
     if (Test-Path $defaultHive) {
         try {
             & reg.exe load 'HKU\WinDeploy_DPI' $defaultHive 2>$null
-            Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'LogPixels'       96 DWord
-            Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'Win8DpiScaling'   1 DWord
-            Write-LogInfo '  Default user hive updated.'
+            if ($LASTEXITCODE -ne 0) {
+                Write-LogWarning "  Failed to load default user hive for DPI (exit $LASTEXITCODE). Skipping."
+            } else {
+                Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'LogPixels'       96 DWord
+                Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'Win8DpiScaling'   1 DWord
+                Write-LogInfo '  Default user hive updated for DPI.'
+            }
         } finally {
             [gc]::Collect()
             & reg.exe unload 'HKU\WinDeploy_DPI' 2>$null

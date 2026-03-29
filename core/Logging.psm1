@@ -114,7 +114,7 @@ function Write-Log {
         foreach ($target in @($Script:StageLog, $Script:SessionLog)) {
             if ($target) {
                 try {
-                    Add-Content -Path $target -Value $logLine -Encoding UTF8
+                    [System.IO.File]::AppendAllText($target, $logLine + "`r`n", [System.Text.Encoding]::UTF8)
                 } catch {
                     # Non-fatal: log write failure should not stop deployment
                     Write-Host "[LOGGER ERROR] Could not write to '$target': $_" -ForegroundColor Red

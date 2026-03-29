@@ -138,6 +138,7 @@ All under `C:\ProgramData\WinDeploy\Logs\`:
 | `monitor_crash.log` | WPF crash detail |
 | `monitor_crash.txt` | Plain-text crash readable in Notepad |
 | `completion_report.txt` | Final deployment summary |
+| `tailscale_auth_url.txt` | Fallback auth URL if QR generation fails (in deploy root) |
 
 ---
 
@@ -198,9 +199,11 @@ Manifest signing uses GPG. See `docs/gpg-setup.md`. Until configured, manifest i
 | Symptom | Cause | Fix |
 |---|---|---|
 | Monitor window off-screen | Previous position from disconnected display | Fixed: `CenterScreen` + bounds clamp on load |
-| `stream was not readable` | Concurrent `Add-Content` with SYSTEM writer | Fixed: `[System.IO.File]::AppendAllText` throughout |
+| `stream was not readable` | Concurrent `Add-Content` with SYSTEM writer | Fixed: `[System.IO.File]::AppendAllText` in all log writers |
 | `$Window cannot be retrieved` | XAML parse failed before assignment | Check `monitor_crash.txt` for the XAML error |
 | Tasks not registering | Resilience ran before repo was copied | Fixed: Resilience runs after `Copy-RepoToDeployRoot` |
 | `parameter set cannot be resolved` | `-LogonType` with `-GroupId` | Remove `-LogonType` from group-based principals |
-| Monitor showing error panel | State property case mismatch | Fixed: all state reads now use PascalCase |
+| Monitor showing error panel | State property case mismatch | Fixed: all state reads use PascalCase. Lint rule enforces this. |
 | Auto-logon not cleared | Cleanup stage skipped | AutoLogonSafety task clears it unconditionally after 6h |
+| PSGallery unreachable | No internet during WindowsUpdate stage | Fixed: pre-flight connectivity check with clear error message |
+| QR code missing in Monitor | All QR generation methods failed | Fixed: auth URL saved to `tailscale_auth_url.txt` as fallback |

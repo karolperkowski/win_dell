@@ -243,6 +243,25 @@ try {
         Write-LogInfo 'Optional removals skipped (RemoveOptional = false in config).'
     }
 
+    # Post-removal verification
+    Write-LogSection 'Post-Removal Verification'
+    $allRemovalTargets = @($lists.Safe)
+    if ($removeOptional) { $allRemovalTargets += @($lists.Optional) }
+    $stragglers = @()
+    foreach ($app in $allRemovalTargets) {
+        if (Test-IsProtected -PackageName $app) { continue }
+        $still = Get-AppxPackage -AllUsers -Name "*$app*" -ErrorAction SilentlyContinue
+        if ($still) {
+            $stragglers += $app
+            Write-LogWarning "  App still present after removal: $app"
+        }
+    }
+    if ($stragglers.Count -gt 0) {
+        Write-LogWarning "  $($stragglers.Count) app(s) could not be fully removed."
+    } else {
+        Write-LogSuccess '  All targeted apps removed successfully.'
+    }
+
     # Registry tweaks
     Write-LogSection 'Registry Tweaks'
     Invoke-RegistryTweaks

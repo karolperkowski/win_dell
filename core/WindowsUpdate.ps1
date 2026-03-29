@@ -53,6 +53,21 @@ $Script:WU_CYCLE_STATE_KEY  = 'WindowsUpdate_CycleCount'   # stored in state ext
 # Private helpers
 # ---------------------------------------------------------------------------
 
+function Test-PSGalleryReachable {
+    Write-LogInfo 'Pre-flight: checking PSGallery connectivity...'
+    try {
+        $resp = Invoke-WebRequest -Uri 'https://www.powershellgallery.com/api/v2' `
+            -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        if ($resp.StatusCode -eq 200) {
+            Write-LogSuccess 'PSGallery is reachable.'
+            return $true
+        }
+    } catch {
+        Write-LogWarning "PSGallery connectivity check failed: $($_.Exception.Message)"
+    }
+    return $false
+}
+
 function Install-NuGetProvider {
     Write-LogInfo 'Checking NuGet package provider...'
     $nuget = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
@@ -198,6 +213,14 @@ function Read-StateRaw {
 
 try {
     Write-LogInfo "Stage '$StageName' starting."
+
+    # Pre-flight: verify PSGallery is reachable before attempting module installs
+    if (-not (Test-PSGalleryReachable)) {
+        Write-LogError 'PSGallery is unreachable. Cannot install NuGet provider or PSWindowsUpdate module.'
+        Write-LogError 'Check internet connectivity and DNS resolution, then re-run.'
+        Close-Logger -FinalStatus 'FAILED'
+        return @{ Status = 'Failed'; Message = 'PSGallery unreachable - check internet connectivity.' }
+    }
 
     # Step 1 - Set up NuGet + WU module
     Install-NuGetProvider

@@ -369,6 +369,27 @@ function Invoke-StatePropertyCheck {
         }
     }
 
+    # --- Rule C2: camelCase $state.x access in any state-consuming script ---
+    # State.psm1 writes PascalCase keys. Any $state.camelCase access relies on PS
+    # case-insensitivity and violates project conventions.
+    $notifyPs1 = Join-Path $RepoRoot 'core\Notify.ps1'
+    $stateConsumers = @($monitorPs1, $notifyPs1) | Where-Object { Test-Path $_ }
+    foreach ($consumerFile in $stateConsumers) {
+        $consumerLines = Get-Content $consumerFile
+        for ($i = 0; $i -lt $consumerLines.Count; $i++) {
+            $line = $consumerLines[$i]
+            if ($line.TrimStart().StartsWith('#')) { continue }
+            # Match $state.camelCase (first letter lowercase) - indicates wrong casing
+            # Use -cmatch for case-sensitive matching (PS -match is case-insensitive)
+            if ($line -cmatch '\$state\.([a-z][A-Za-z0-9]+)' -and
+                $line -notmatch '\$state\[') {
+                Add-Violation -File $consumerFile -Line ($i + 1) `
+                    -Rule 'State-CamelCase' `
+                    -Message ('$state.' + $Matches[1] + ' uses camelCase - state keys are PascalCase. Use $state.' + ($Matches[1].Substring(0,1).ToUpper() + $Matches[1].Substring(1)) + ' instead.')
+            }
+        }
+    }
+
     # --- Rule D: Unsafe dynamic property access on state sub-objects ---
     # ConvertFrom-Json returns PSCustomObject for nested objects (e.g. StageTimestamps).
     # Accessing .PropertyName on PSCustomObject under StrictMode throws if the property

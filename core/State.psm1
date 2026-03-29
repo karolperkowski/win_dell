@@ -48,9 +48,9 @@ $Script:LOCK_TIMEOUT = 10
 # Canonical pipeline order - sourced from Config.psm1, fallback inline
 $Script:STAGE_ORDER  = if ($WD) { [System.Collections.Generic.List[string]]$WD.StageOrder } else {
     [System.Collections.Generic.List[string]]@(
-        'WindowsUpdate','PowerSettings','Debloat','WinTweaks',
+        'PowerSettings','Debloat','WinTweaks',
         'InstallDellSupportAssist','InstallDellPowerManager',
-        'InstallTailscale','Cleanup'
+        'InstallTailscale','WindowsUpdate','Cleanup'
     )
 }
 
@@ -73,8 +73,16 @@ function Invoke-WithFileLock {
         Start-Sleep -Milliseconds $interval
         $waited += $interval / 1000
         if ($waited -ge $Script:LOCK_TIMEOUT) {
-            # Stale lock - remove and proceed
+            # Stale lock detected - remove, pause, then verify it doesn't reappear
+            Write-Warning "[State] Stale lock file detected after ${waited}s - removing."
             Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $lockFile) {
+                # Another writer re-created the lock - wait one more cycle
+                Write-Warning '[State] Lock reappeared after stale removal - another writer is active. Retrying.'
+                $waited = 0
+                continue
+            }
             break
         }
     }

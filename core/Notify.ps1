@@ -77,20 +77,20 @@ try {
 # ---------------------------------------------------------------------------
 # Build notification content
 # ---------------------------------------------------------------------------
-if ($state.deployComplete -eq $true) {
+if ($state.DeployComplete -eq $true) {
     $balloonTitle   = 'WinDeploy — Deployment complete'
     $elapsed = try {
-        $span = [datetime]::Parse($state.deployCompletedAt) - [datetime]::Parse($state.bootstrappedAt)
+        $span = [datetime]::Parse($state.DeployCompletedAt) - [datetime]::Parse($state.BootstrappedAt)
         "$([int]$span.TotalMinutes) min"
     } catch { 'unknown duration' }
-    $balloonText    = "All stages finished successfully in $elapsed. Reboots: $($state.rebootCount)."
+    $balloonText    = "All stages finished successfully in $elapsed. Reboots: $($state.RebootCount)."
     $balloonIcon    = [System.Windows.Forms.ToolTipIcon]::Info
     $trayIcon       = [System.Drawing.SystemIcons]::Information
     $menuTitle      = 'Deployment complete'
 } else {
     $balloonTitle   = 'WinDeploy — Deployment interrupted'
-    $lastErr        = if ($state.lastError) { $state.lastError } else { 'Unknown error' }
-    $balloonText    = "Last stage: $($state.currentStage). Error: $lastErr"
+    $lastErr        = if ($state.LastError) { $state.LastError } else { 'Unknown error' }
+    $balloonText    = "Last stage: $($state.CurrentStage). Error: $lastErr"
     $balloonIcon    = [System.Windows.Forms.ToolTipIcon]::Warning
     $trayIcon       = [System.Drawing.SystemIcons]::Warning
     $menuTitle      = 'Deployment interrupted'

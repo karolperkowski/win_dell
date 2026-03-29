@@ -4,7 +4,7 @@
     WinDeploy Stage: Install and register Tailscale
 
 .DESCRIPTION
-    1. Downloads and silently installs the Tailscale MSI.
+    1. Installs Tailscale silently via winget.
     2. Starts tailscale up, captures the auth URL from its output in real-time.
     3. Generates a QR code PNG so the monitor can display it.
     4. Writes C:\ProgramData\WinDeploy\tailscale.json with the URL and QR path.
@@ -35,7 +35,7 @@ $DEPLOY_ROOT   = 'C:\ProgramData\WinDeploy'
 $TS_JSON       = Join-Path $DEPLOY_ROOT 'tailscale.json'
 $TS_QR_PNG     = Join-Path $DEPLOY_ROOT 'tailscale_qr.png'
 $TS_EXE        = 'C:\Program Files\Tailscale\tailscale.exe'
-$TS_MSI_URL    = 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi'
+$TS_WINGET_ID  = 'Tailscale.Tailscale'
 $TS_SERVICE    = 'Tailscale'
 
 # Config defaults
@@ -67,20 +67,26 @@ function Write-TailscaleJson {
     $data | ConvertTo-Json | Set-Content -Path $TS_JSON -Encoding UTF8
 }
 
-function Install-TailscaleMSI {
-    Write-LogInfo 'Downloading Tailscale MSI...'
-    $msiPath = Join-Path $env:TEMP 'tailscale-setup.msi'
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $TS_MSI_URL -OutFile $msiPath -UseBasicParsing -ErrorAction Stop
-    Write-LogInfo 'Running silent MSI install...'
-    $msiLog = Join-Path $env:TEMP 'tailscale_install.log'
-    $proc = Start-Process msiexec.exe `
-        -ArgumentList "/i `"$msiPath`" /quiet /norestart /l*v `"$msiLog`"" `
-        -Wait -PassThru
-    if ($proc.ExitCode -notin @(0, 3010)) {
-        throw "Tailscale MSI install failed (exit $($proc.ExitCode)). Log: $msiLog"
+function Install-TailscaleViaWinget {
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        throw 'winget not found. winget ships with App Installer from the Microsoft Store.'
     }
-    Write-LogSuccess "Tailscale installed (exit $($proc.ExitCode))."
+
+    Write-LogInfo "Installing Tailscale via winget ($TS_WINGET_ID)..."
+    & winget.exe install `
+        --id $TS_WINGET_ID `
+        --silent `
+        --accept-package-agreements `
+        --accept-source-agreements `
+        --disable-interactivity `
+        2>&1
+
+    if ($LASTEXITCODE -in @(0, -1978335189)) {
+        # 0 = success, -1978335189 (0x8A150011) = already installed
+        Write-LogSuccess "Tailscale installed via winget (exit $LASTEXITCODE)."
+    } else {
+        throw "Tailscale winget install failed (exit $LASTEXITCODE)."
+    }
 }
 
 function Wait-TailscaleService {
@@ -168,6 +174,14 @@ function New-QRCodePng {
     }
 
     Write-LogWarning 'QR code generation failed on all attempts. Monitor will show URL as text only.'
+    # Write auth URL to a plaintext file so the user can easily copy-paste it
+    $urlFile = Join-Path (Split-Path $OutputPath -Parent) 'tailscale_auth_url.txt'
+    try {
+        [System.IO.File]::WriteAllText($urlFile, "Open this URL to register Tailscale:`r`n$Data`r`n", [System.Text.Encoding]::UTF8)
+        Write-LogInfo "Auth URL saved to: $urlFile"
+    } catch {
+        Write-LogWarning "Could not write auth URL file: $($_.Exception.Message)"
+    }
     return $false
 }
 
@@ -230,7 +244,7 @@ try {
         Write-LogInfo 'Tailscale installed but not registered - proceeding to auth.'
     } else {
         # ── Install ──
-        Install-TailscaleMSI
+        Install-TailscaleViaWinget
     }
 
     Wait-TailscaleService
