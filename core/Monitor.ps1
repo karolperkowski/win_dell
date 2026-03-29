@@ -23,6 +23,8 @@ $ConfirmPreference     = 'None'
 # failures are always captured even if the logging module cannot load.
 # ---------------------------------------------------------------------------
 $Script:_rawLog = 'C:\ProgramData\WinDeploy\Logs\early.log'
+$Script:_crashLog = 'C:\ProgramData\WinDeploy\Logs\monitor_crash.log'
+
 function Write-Early {
     param([string]$Msg)
     $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -34,14 +36,27 @@ function Write-Early {
         Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
     } catch { Write-Host "[Monitor] Log write failed: $_" }
 }
-Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
+
+# Resolve script directory regardless of how the script was launched.
+# $PSScriptRoot is empty when launched via Start-Process -ArgumentList,
+# so fall back to $MyInvocation.MyCommand.Path.
+$Script:_scriptDir = if ($PSScriptRoot) {
+    $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path $MyInvocation.MyCommand.Path -Parent
+} else {
+    'C:\ProgramData\WinDeploy\repo\core'
+}
+
+Write-Early "=== Monitor.ps1 started (PID $PID) ==="
+Write-Early "ScriptDir    : $Script:_scriptDir"
 Write-Early "PSScriptRoot : $PSScriptRoot"
 Write-Early "Running as   : $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Early "ExecutionPolicy: $(Get-ExecutionPolicy)"
 
 
 # Load shared constants - provides $WD.DeployRoot, $WD.StageOrder, etc.
-$Script:_cfgPath = Join-Path $PSScriptRoot 'Config.psm1'
+$Script:_cfgPath = Join-Path $Script:_scriptDir 'Config.psm1'
 if (Test-Path $Script:_cfgPath) {
     Import-Module $Script:_cfgPath -DisableNameChecking -Force
 }
@@ -55,6 +70,21 @@ $STAGE_ORDER  = if ($WD) { @($WD.StageOrder) } else { @('WindowsUpdate','PowerSe
 $STAGE_LABELS = if ($WD) { $WD.StageLabels   } else { @{} }
 $REFRESH_MS   = 3000
 $CLOSE_DELAY  = 30
+
+
+# Wrap everything from here in a trap so ANY unhandled crash writes to disk.
+# This fires even if WPF never loads, giving us a crash file to diagnose.
+trap {
+    $msg = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [FATAL] Monitor unhandled: $($_.Exception.Message) Line:$($_.InvocationInfo.ScriptLineNumber)"
+    try { Add-Content -Path $Script:_rawLog  -Value $msg -Encoding UTF8 } catch {}
+    try { Add-Content -Path $Script:_crashLog -Value $msg -Encoding UTF8 } catch {}
+    # Write a plain-text crash file that notepad can open - visible even without WPF
+    try {
+        $plain = "WinDeploy Monitor Crash`r`n`r`n$($_.Exception.Message)`r`n`r`nLine: $($_.InvocationInfo.ScriptLineNumber)`r`nLog: $Script:_crashLog"
+        [System.IO.File]::WriteAllText('C:\ProgramData\WinDeploy\Logs\monitor_crash.txt', $plain)
+    } catch {}
+    continue
+}
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
