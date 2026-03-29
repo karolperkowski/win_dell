@@ -90,7 +90,7 @@ function Get-PendingUpdateList {
     #>
     Write-LogInfo 'Querying pending Windows Updates (this may take a few minutes)...'
     try {
-        $updates = Get-WindowsUpdate -AcceptAll -IgnoreReboot -ErrorAction Stop
+        $updates = Get-WindowsUpdate -ErrorAction Stop
         return $updates
     } catch {
         Write-LogWarning "Get-WindowsUpdate query failed: $($_.Exception.Message)"
