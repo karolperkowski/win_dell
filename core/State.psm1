@@ -32,25 +32,27 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Import shared constants - provides $WD.StageOrder, $WD.StateFile, etc.
+$Script:_configPath = Join-Path $PSScriptRoot 'Config.psm1'
+if (Test-Path $Script:_configPath) {
+    Import-Module $Script:_configPath -DisableNameChecking -Force
+}
+
 # ---------------------------------------------------------------------------
 # Module-scoped constants
 # ---------------------------------------------------------------------------
-$Script:STATE_FILE   = 'C:\ProgramData\WinDeploy\state.json'
+$Script:STATE_FILE   = if ($WD) { $WD.StateFile } else { 'C:\ProgramData\WinDeploy\state.json' }
 $Script:SCHEMA_VER   = 1
-$Script:LOCK_TIMEOUT = 10   # seconds to wait for file lock
+$Script:LOCK_TIMEOUT = 10
 
-# Ordered list of all stages in execution order.
-# This is the canonical pipeline definition - edit here to add/remove stages.
-$Script:STAGE_ORDER = @(
-    'WindowsUpdate'
-    'PowerSettings'
-    'Debloat'
-    'WinTweaks'
-    'InstallDellSupportAssist'
-    'InstallDellPowerManager'
-    'InstallTailscale'
-    'Cleanup'
-)
+# Canonical pipeline order - sourced from Config.psm1, fallback inline
+$Script:STAGE_ORDER  = if ($WD) { [System.Collections.Generic.List[string]]$WD.StageOrder } else {
+    [System.Collections.Generic.List[string]]@(
+        'WindowsUpdate','PowerSettings','Debloat','WinTweaks',
+        'InstallDellSupportAssist','InstallDellPowerManager',
+        'InstallTailscale','Cleanup'
+    )
+}
 
 # ---------------------------------------------------------------------------
 # Private helpers

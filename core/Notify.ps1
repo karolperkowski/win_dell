@@ -20,7 +20,8 @@
 param()
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'SilentlyContinue'   # Notification failures must not be visible to user
+$ErrorActionPreference = 'SilentlyContinue'
+$ConfirmPreference     = 'None'   # Notification failures must not be visible to user
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing

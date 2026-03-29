@@ -26,17 +26,16 @@ $ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unatt
 # ---------------------------------------------------------------------------
 # Resolve module paths relative to this script's location
 # ---------------------------------------------------------------------------
-$Script:RepoRoot  = Split-Path $PSScriptRoot -Parent   # /core/../  => repo root
+$Script:RepoRoot  = Split-Path $PSScriptRoot -Parent
 $Script:CoreDir   = $PSScriptRoot
-$Script:TASK_NAME = 'WinDeploy-Resume'
 
-# Import shared modules
+Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force
 Import-Module (Join-Path $Script:CoreDir 'State.psm1')   -DisableNameChecking -Force
 Import-Module (Join-Path $Script:CoreDir 'Logging.psm1') -DisableNameChecking -Force
 
-# ---------------------------------------------------------------------------
-# Stage map: stage name -> script file in /core
-# ---------------------------------------------------------------------------
+$Script:TASK_NAME = $WD.TaskResume
+
+# Stage map: name → script. Execution order is driven by $WD.StageOrder in State.psm1.
 $Script:STAGE_SCRIPTS = [ordered]@{
     WindowsUpdate            = Join-Path $Script:CoreDir 'WindowsUpdate.ps1'
     PowerSettings            = Join-Path $Script:CoreDir 'PowerSettings.ps1'
@@ -48,10 +47,7 @@ $Script:STAGE_SCRIPTS = [ordered]@{
     Cleanup                  = Join-Path $Script:CoreDir 'Cleanup.ps1'
 }
 
-# Stages that are allowed to request a reboot on completion
-$Script:REBOOT_ALLOWED_STAGES = @('WindowsUpdate')
-
-# Maximum consecutive failures before the orchestrator aborts
+$Script:REBOOT_ALLOWED_STAGES    = $WD.RebootAllowedStages
 $Script:MAX_CONSECUTIVE_FAILURES = 3
 
 # ---------------------------------------------------------------------------

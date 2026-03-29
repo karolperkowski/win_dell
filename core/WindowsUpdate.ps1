@@ -184,7 +184,7 @@ function Increment-UpdateCycleCount {
 }
 
 function Read-StateRaw {
-    $raw = Get-Content -Path 'C:\ProgramData\WinDeploy\state.json' -Raw -Encoding UTF8
+    $raw = Get-Content -Path $Script:STATE_FILE -Raw -Encoding UTF8
     $obj = $raw | ConvertFrom-Json
     # Shim for PS 5.1
     $ht = @{}

@@ -1,0 +1,80 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    WinDeploy shared constants.
+
+.DESCRIPTION
+    Single source of truth for every path, name, and pipeline definition
+    used across the framework. Import this module before any other WinDeploy
+    module. All values are read-only after export.
+
+    Import pattern (from any core script):
+        Import-Module (Join-Path $PSScriptRoot 'Config.psm1') -DisableNameChecking -Force
+#>
+
+Set-StrictMode -Version Latest
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+$Script:DEPLOY_ROOT = 'C:\ProgramData\WinDeploy'
+$Script:REPO_DIR    = Join-Path $Script:DEPLOY_ROOT 'repo'
+$Script:LOG_DIR     = Join-Path $Script:DEPLOY_ROOT 'Logs'
+$Script:STATE_FILE  = Join-Path $Script:DEPLOY_ROOT 'state.json'
+$Script:TS_JSON     = Join-Path $Script:DEPLOY_ROOT 'tailscale.json'
+$Script:TS_QR_PNG   = Join-Path $Script:DEPLOY_ROOT 'tailscale_qr.png'
+
+# ---------------------------------------------------------------------------
+# Scheduled task names
+# ---------------------------------------------------------------------------
+$Script:TASK_RESUME  = 'WinDeploy-Resume'
+$Script:TASK_MONITOR = 'WinDeploy-Monitor'
+$Script:TASK_NOTIFY  = 'WinDeploy-Notify'
+
+# ---------------------------------------------------------------------------
+# Pipeline: canonical stage order and display labels
+# ---------------------------------------------------------------------------
+$Script:STAGE_ORDER = @(
+    'WindowsUpdate'
+    'PowerSettings'
+    'Debloat'
+    'WinTweaks'
+    'InstallDellSupportAssist'
+    'InstallDellPowerManager'
+    'InstallTailscale'
+    'Cleanup'
+)
+
+$Script:STAGE_LABELS = [ordered]@{
+    WindowsUpdate            = 'Windows Update'
+    PowerSettings            = 'Power Settings'
+    Debloat                  = 'Debloat'
+    WinTweaks                = 'Windows Tweaks'
+    InstallDellSupportAssist = 'Dell SupportAssist'
+    InstallDellPowerManager  = 'Dell Power Manager'
+    InstallTailscale         = 'Tailscale'
+    Cleanup                  = 'Cleanup'
+}
+
+# Stages that are permitted to return 'RebootRequired' to the orchestrator
+$Script:REBOOT_ALLOWED_STAGES = @('WindowsUpdate', 'InstallTailscale', 'Cleanup')
+
+# ---------------------------------------------------------------------------
+# Expose as module-level variables (accessed as $WD.* by callers)
+# ---------------------------------------------------------------------------
+$WD = [PSCustomObject]@{
+    DeployRoot          = $Script:DEPLOY_ROOT
+    RepoDir             = $Script:REPO_DIR
+    LogDir              = $Script:LOG_DIR
+    StateFile           = $Script:STATE_FILE
+    TailscaleJson       = $Script:TS_JSON
+    TailscaleQrPng      = $Script:TS_QR_PNG
+    TaskResume          = $Script:TASK_RESUME
+    TaskMonitor         = $Script:TASK_MONITOR
+    TaskNotify          = $Script:TASK_NOTIFY
+    StageOrder          = $Script:STAGE_ORDER
+    StageLabels         = $Script:STAGE_LABELS
+    RebootAllowedStages = $Script:REBOOT_ALLOWED_STAGES
+}
+
+Export-ModuleMember -Variable WD

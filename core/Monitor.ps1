@@ -18,40 +18,32 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ConfirmPreference     = 'None'
 
-$DEPLOY_ROOT = 'C:\ProgramData\WinDeploy'
-$STATE_FILE  = Join-Path $DEPLOY_ROOT 'state.json'
-$SESSION_LOG = Join-Path $DEPLOY_ROOT 'Logs\session.log'
-$TS_JSON     = Join-Path $DEPLOY_ROOT 'tailscale.json'
-$REFRESH_MS  = 3000
-$CLOSE_DELAY = 30
-
-$STAGE_ORDER = @(
-    'WindowsUpdate','PowerSettings','Debloat','WinTweaks',
-    'InstallDellSupportAssist','InstallDellPowerManager',
-    'InstallTailscale','Cleanup'
-)
-$STAGE_LABELS = @{
-    WindowsUpdate            = 'Windows Update'
-    PowerSettings            = 'Power Settings'
-    Debloat                  = 'Debloat'
-    WinTweaks                = 'Windows Tweaks'
-    InstallDellSupportAssist = 'Dell SupportAssist'
-    InstallDellPowerManager  = 'Dell Power Manager'
-    InstallTailscale         = 'Tailscale'
-    Cleanup                  = 'Cleanup'
+# Load shared constants - provides $WD.DeployRoot, $WD.StageOrder, etc.
+$Script:_cfgPath = Join-Path $PSScriptRoot 'Config.psm1'
+if (Test-Path $Script:_cfgPath) {
+    Import-Module $Script:_cfgPath -DisableNameChecking -Force
 }
+
+$DEPLOY_ROOT  = if ($WD) { $WD.DeployRoot    } else { 'C:\ProgramData\WinDeploy' }
+$STATE_FILE   = if ($WD) { $WD.StateFile     } else { "$DEPLOY_ROOT\state.json" }
+$SESSION_LOG  = "$DEPLOY_ROOT\Logs\session.log"
+$TS_JSON      = if ($WD) { $WD.TailscaleJson } else { "$DEPLOY_ROOT\tailscale.json" }
+$STAGE_ORDER  = if ($WD) { @($WD.StageOrder) } else { @('WindowsUpdate','PowerSettings','Debloat','WinTweaks','InstallDellSupportAssist','InstallDellPowerManager','InstallTailscale','Cleanup') }
+$STAGE_LABELS = if ($WD) { $WD.StageLabels   } else { @{} }
+$REFRESH_MS   = 3000
+$CLOSE_DELAY  = 30
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 
-# Keep display and system awake for the entire duration the monitor is open.
+# Keep display and system awake while the monitor is open.
 # ES_CONTINUOUS(0x80000000) | ES_DISPLAY_REQUIRED(0x00000002) | ES_SYSTEM_REQUIRED(0x00000001)
-# Windows automatically reverts when this process exits.
+# Windows automatically reverts when this process exits — no cleanup needed.
 try {
     Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);' `
              -Name 'SleepGuard' -Namespace 'WinDeploy' -ErrorAction Stop
     [WinDeploy.SleepGuard]::SetThreadExecutionState(0x80000003) | Out-Null
-} catch { <# non-fatal - deployment continues #> }
+} catch { <# non-fatal #> }
 
 # ---------------------------------------------------------------------------
 # XAML
@@ -285,7 +277,7 @@ function Update-UI {
         $started = try { [datetime]::Parse($state.bootstrappedAt).ToString('HH:mm:ss') } catch { '...' }
         $SubtitleLabel.Text = "$env:COMPUTERNAME  ·  Started $started"
         $ElapsedLabel.Text  = Format-Elapsed $state.bootstrappedAt
-        $RebootLabel.Text   = [string]($state.rebootCount ?? 0)
+        $RebootLabel.Text   = if ($state.rebootCount) { [string]$state.rebootCount } else { '0' }
     } else {
         $FooterNote.Text = "Watching $STATE_FILE ..."; return
     }
