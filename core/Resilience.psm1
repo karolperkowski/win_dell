@@ -270,12 +270,12 @@ try {
                 -Description $def.Description `
                 -Force | Out-Null
 
-            # Post-registration verification - don't trust Register-ScheduledTask's exit code
+            # Post-registration verification - don't trust the exit code
             $check = Get-ScheduledTask -TaskName $def.Name -ErrorAction SilentlyContinue
             if ($check) {
                 Write-ResilienceLog "Task '$($def.Name)' registered and verified." OK
             } else {
-                Write-ResilienceLog "Task '$($def.Name)' registration FAILED silently - task not found after Register-ScheduledTask." ERROR
+                Write-ResilienceLog "Task '$($def.Name)' was NOT created - silent failure after task registration." ERROR
             }
 
         } catch {
