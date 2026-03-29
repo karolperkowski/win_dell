@@ -290,7 +290,7 @@ function Invoke-StatePropertyCheck {
     # Keys are defined as string literals in hashtable assignments:
     # $state['KeyName'] = ... or $initialState = [ordered]@{ KeyName = ... }
     $schemaKeys = [System.Collections.Generic.HashSet[string]]::new()
-    $stateContent | Select-String -Pattern "\\\$state\['([A-Za-z][A-Za-z0-9]+)'\]" -AllMatches |
+    $stateContent | Select-String -Pattern '\\\$state\[''([A-Za-z][A-Za-z0-9]+)''\]' -AllMatches |
         ForEach-Object { $_.Matches } | ForEach-Object { $null = $schemaKeys.Add($_.Groups[1].Value) }
     $stateContent | Select-String -Pattern "^\s{8}([A-Z][A-Za-z0-9]+)\s+=" -AllMatches |
         ForEach-Object { $_.Matches } | ForEach-Object { $null = $schemaKeys.Add($_.Groups[1].Value) }
@@ -311,7 +311,7 @@ function Invoke-StatePropertyCheck {
 
     # --- Extract keys Monitor.ps1 reads via Get-StateProp ---
     $monitorKeys = [System.Collections.Generic.HashSet[string]]::new()
-    $monitorContent | Select-String -Pattern "Get-StateProp\s+\`\$state\s+'([A-Za-z][A-Za-z0-9]+)'" -AllMatches |
+    $monitorContent | Select-String -Pattern 'Get-StateProp\s+\$state\s+''([A-Za-z][A-Za-z0-9]+)''' -AllMatches |
         ForEach-Object { $_.Matches } | ForEach-Object { $null = $monitorKeys.Add($_.Groups[1].Value) }
 
     # --- Rule A: Monitor reads a key not in the schema ---
@@ -347,7 +347,7 @@ function Invoke-StatePropertyCheck {
         if ($line -match '\$state\.([A-Za-z][A-Za-z0-9]+)' -and $line -notmatch '\$state\[') {
             Add-Violation -File $monitorPs1 -Line ($i + 1) `
                 -Rule 'State-DirectAccess' `
-                -Message "Direct `$state.$($Matches[1]) access in Monitor. Use Get-StateProp `$state '$($Matches[1])' <default> to avoid crashes on missing or null properties."
+                -Message ('Direct $state.' + $Matches[1] + ' in Monitor - use Get-StateProp $state ''' + $Matches[1] + ''' <default> instead.')
         }
     }
 
