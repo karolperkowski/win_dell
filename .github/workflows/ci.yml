@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed for manifest job to commit back to repo
+
+jobs:
+
+  # ── Job 1: PSScriptAnalyzer + custom lint checks ──────────────────────────
+  lint:
+    name: Lint
+    runs-on: windows-latest
+    if: "!contains(github.event.head_commit.message, 'chore: update manifest')"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
+          Write-Host "PSScriptAnalyzer $((Get-Module -ListAvailable PSScriptAnalyzer).Version) installed."
+
+      - name: Run lint checks
+        shell: powershell
+        run: |
+          & powershell.exe -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\lint.ps1" -RepoRoot "$env:GITHUB_WORKSPACE" -Strict
+          exit $LASTEXITCODE
+
+      - name: Upload violations on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-violations
+          path: lint.ps1
+          retention-days: 7
+
+  # ── Job 2: Validate scheduled task XML schemas ────────────────────────────
+  validate-tasks:
+    name: Validate task XML
+    runs-on: windows-latest
+    if: "!contains(github.event.head_commit.message, 'chore: update manifest')"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate task XML can be registered
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+          $testScript = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+
+          $taskDefs = @(
+              @{ Name='Test-Resume';   Triggers=@('Boot','Logon'); Principal='SYSTEM' }
+              @{ Name='Test-Monitor';  Triggers=@('Logon');        Principal='Users'  }
+              @{ Name='Test-Notify';   Triggers=@('Logon');        Principal='Users'  }
+              @{ Name='Test-Safety';   OneShot=$true;              Principal='SYSTEM' }
+              @{ Name='Test-Watchdog'; Repeating=$true;            Principal='SYSTEM' }
+          )
+
+          foreach ($def in $taskDefs) {
+              try {
+                  if ($def.OneShot) {
+                      $triggerAt = (Get-Date).AddHours(6)
+                      $trigger   = New-ScheduledTaskTrigger -Once -At $triggerAt
+                      $trigger.EndBoundary = $triggerAt.AddHours(1).ToString('s')
+                  } elseif ($def.Repeating) {
+                      $trigger = New-ScheduledTaskTrigger `
+                          -Once -At (Get-Date) `
+                          -RepetitionInterval (New-TimeSpan -Minutes 30) `
+                          -RepetitionDuration (New-TimeSpan -Days 9999)
+                  } else {
+                      $triggers = @()
+                      foreach ($t in $def.Triggers) {
+                          $triggers += switch ($t) {
+                              'Boot'  { New-ScheduledTaskTrigger -AtStartup }
+                              'Logon' { New-ScheduledTaskTrigger -AtLogOn   }
+                          }
+                      }
+                      $trigger = $triggers
+                  }
+
+                  $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-File `"$testScript`""
+                  $principal = if ($def.Principal -eq 'SYSTEM') {
+                      New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+                  } else {
+                      New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -RunLevel Limited
+                  }
+                  $settings  = New-ScheduledTaskSettingsSet `
+                      -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+                      -MultipleInstances IgnoreNew -StartWhenAvailable
+
+                  $tempName  = "WinDeployCI-$($def.Name)-$(Get-Random)"
+                  Register-ScheduledTask -TaskName $tempName `
+                      -Action $action -Trigger $trigger `
+                      -Principal $principal -Settings $settings -Force | Out-Null
+                  Unregister-ScheduledTask -TaskName $tempName -Confirm:$false
+                  Write-Host "[OK] $($def.Name)" -ForegroundColor Green
+
+              } catch {
+                  Write-Host "[FAIL] $($def.Name) - $($_.Exception.Message)" -ForegroundColor Red
+                  $failed = $true
+              }
+          }
+
+          if ($failed) { exit 1 }
+          Write-Host "`nAll task schemas valid." -ForegroundColor Green
+
+  # ── Job 3: Generate and sign manifest (only runs if lint + validate pass) ─
+  manifest:
+    name: Sign manifest
+    runs-on: windows-latest
+    needs: [ lint, validate-tasks ]
+    # Only on push to main (not PRs), skip bot commits
+    if: |
+      github.event_name == 'push' &&
+      !contains(github.event.head_commit.message, 'chore: update manifest')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate manifest.json
+        shell: pwsh
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $commitSha = (git rev-parse HEAD).Trim()
+          $zipUrl    = "https://github.com/${{ github.repository }}/archive/$commitSha.zip"
+          $zipPath   = Join-Path $env:TEMP 'release.zip'
+
+          Write-Host "Commit: $commitSha"
+          Write-Host "Downloading ZIP..."
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+          $zipHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA-256: $zipHash"
+          Remove-Item $zipPath -Force
+
+          $manifest = [ordered]@{
+              schema_version = 1
+              repository     = '${{ github.repository }}'
+              branch         = 'main'
+              commit_sha     = $commitSha
+              zip_url        = $zipUrl
+              zip_sha256     = $zipHash
+              generated_at   = (Get-Date -Format 'o')
+          }
+          $manifest | ConvertTo-Json -Depth 3 | Set-Content 'manifest.json' -Encoding UTF8
+
+          if (-not $env:GPG_PRIVATE_KEY) {
+              Write-Warning 'GPG_PRIVATE_KEY not set - skipping signature. See docs/gpg-setup.md'
+              'pending' | Set-Content 'manifest.sig' -Encoding UTF8
+              exit 0
+          }
+
+          $env:GPG_PRIVATE_KEY | gpg --batch --import
+          if ($LASTEXITCODE -ne 0) { throw 'GPG key import failed' }
+
+          echo $env:GPG_PASSPHRASE | gpg --batch --yes --passphrase-fd 0 --armor --detach-sign manifest.json
+          if ($LASTEXITCODE -ne 0) { throw 'GPG signing failed' }
+
+          Move-Item manifest.json.asc manifest.sig -Force
+          Write-Host "Manifest signed." -ForegroundColor Green
+
+      - name: Commit manifest
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet manifest.json manifest.sig; then
+            echo "Manifest unchanged."
+          else
+            git add manifest.json manifest.sig
+            git commit -m "chore: update manifest for $(git rev-parse --short HEAD~1)"
+            git push
+          fi
