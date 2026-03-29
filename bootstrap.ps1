@@ -187,7 +187,19 @@ try {
         Write-BootstrapLog 'WARNING: Resilience module not available - tasks may not be registered.' WARN
     }
 
-    # Step 7 - Kick off orchestrator immediately without waiting for a reboot
+    # Step 7 - Launch monitor immediately so progress is visible from the first run.
+    # Start-Process returns instantly (no -Wait) so the monitor runs alongside
+    # the orchestrator rather than blocking it.
+    $monitorPath = Join-Path $localRepo 'core\Monitor.ps1'
+    if (Test-Path $monitorPath) {
+        Write-BootstrapLog 'Launching monitor window...'
+        Start-Process powershell.exe `
+            -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Normal -File `"$monitorPath`"" `
+            -ErrorAction SilentlyContinue
+    }
+
+    # Step 8 - Kick off orchestrator. This call blocks until the stage completes
+    # or requests a reboot - the monitor window updates independently via the timer.
     Write-BootstrapLog 'Launching orchestrator for first run...'
     $orchestratorPath = Join-Path $localRepo 'core\Orchestrator.ps1'
     & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $orchestratorPath
