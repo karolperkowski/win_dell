@@ -246,6 +246,18 @@ try {
     Remove-ItemProperty $AUTOLOGON_REG 'DefaultPassword' -ErrorAction SilentlyContinue
     Remove-ItemProperty $AUTOLOGON_REG 'DefaultUserName' -ErrorAction SilentlyContinue
     Write-UninstallLog '  Auto-logon disabled, credentials removed.' OK
+
+    # Restore UAC if deployment disabled it
+    $polSystem = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+    $prevUAC = (Get-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue).WinDeployPrevUAC
+    if ($null -ne $prevUAC) {
+        Set-ItemProperty -Path $polSystem -Name 'EnableLUA' -Value $prevUAC -Type DWord -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue
+        Write-UninstallLog "  UAC restored to previous state (EnableLUA=$prevUAC)." OK
+    } else {
+        Set-ItemProperty -Path $polSystem -Name 'EnableLUA' -Value 1 -Type DWord -ErrorAction SilentlyContinue
+        Write-UninstallLog '  UAC re-enabled (default).' OK
+    }
 } catch {
     Write-UninstallLog "  Auto-logon cleanup failed: $($_.Exception.Message)" WARN
 }

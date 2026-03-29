@@ -78,12 +78,27 @@ try {
     Unregister-ScheduledTask -TaskName 'WinDeploy-Monitor' -Confirm:$false -ErrorAction SilentlyContinue
     Write-LogSuccess "Scheduled task 'WinDeploy-Monitor' removed."
 
-    # Disable auto-logon
-    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    Set-ItemProperty $regPath 'AutoAdminLogon'  '0'    -Type String -ErrorAction SilentlyContinue
-    Remove-ItemProperty $regPath 'DefaultPassword'     -ErrorAction SilentlyContinue
-    Set-ItemProperty $regPath 'AutoLogonCount'  '0'    -Type String -ErrorAction SilentlyContinue
-    Write-LogSuccess 'Auto-logon disabled.'
+    # Disable auto-logon and restore UAC
+    $winlogon   = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $polSystem  = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+
+    Set-ItemProperty  $winlogon 'AutoAdminLogon'  '0' -Type String -ErrorAction SilentlyContinue
+    Remove-ItemProperty $winlogon 'DefaultPassword'   -ErrorAction SilentlyContinue
+    Remove-ItemProperty $winlogon 'DefaultUserName'   -ErrorAction SilentlyContinue
+    Set-ItemProperty  $winlogon 'AutoLogonCount'  '0' -Type String -ErrorAction SilentlyContinue
+    Write-LogSuccess 'Auto-logon disabled, credentials removed.'
+
+    # Restore UAC to whatever it was before deployment started
+    $prevUAC = (Get-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue).WinDeployPrevUAC
+    if ($null -ne $prevUAC) {
+        Set-ItemProperty -Path $polSystem -Name 'EnableLUA' -Value $prevUAC -Type DWord -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue
+        Write-LogSuccess "UAC restored to previous state (EnableLUA=$prevUAC)."
+    } else {
+        # No saved state - default is enabled
+        Set-ItemProperty -Path $polSystem -Name 'EnableLUA' -Value 1 -Type DWord -ErrorAction SilentlyContinue
+        Write-LogSuccess 'UAC re-enabled (default).'
+    }
 
     # Write completion report
     Write-CompletionReport

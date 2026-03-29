@@ -107,24 +107,43 @@ function Set-AutoLogon {
     reboots during SYSTEM-level stages (Windows Update) re-enter a session
     without operator intervention.
 
+    Also temporarily disables UAC (EnableLUA=0) for the deployment window.
+    Without this, auto-logon creates a split-token session even for the
+    Administrator account, causing child processes that attempt elevation
+    to show a UAC prompt with no one to click it.
+    UAC is restored by the Cleanup stage after deployment completes.
+
     SECURITY NOTE: Auto-logon credentials are stored in plaintext in the
     registry (HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon).
     This is intentional for unattended deployment; the orchestrator MUST
-    disable auto-logon in its final cleanup stage.
+    disable auto-logon and re-enable UAC in its final cleanup stage.
+    A reboot is required for EnableLUA changes to take effect.
     #>
     param(
         [string]$Username = 'Administrator',
         [string]$Password = ''   # Blank password on fresh installs
     )
 
-    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $polSystem = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 
-    Set-ItemProperty -Path $regPath -Name 'AutoAdminLogon'  -Value '1'    -Type String
-    Set-ItemProperty -Path $regPath -Name 'DefaultUserName' -Value $Username -Type String
-    Set-ItemProperty -Path $regPath -Name 'DefaultPassword' -Value $Password -Type String
-    Set-ItemProperty -Path $regPath -Name 'AutoLogonCount'  -Value '99'   -Type String
+    # Auto-logon
+    Set-ItemProperty -Path $winlogon -Name 'AutoAdminLogon'  -Value '1'      -Type String
+    Set-ItemProperty -Path $winlogon -Name 'DefaultUserName' -Value $Username -Type String
+    Set-ItemProperty -Path $winlogon -Name 'DefaultPassword' -Value $Password -Type String
+    Set-ItemProperty -Path $winlogon -Name 'AutoLogonCount'  -Value '99'      -Type String
 
-    Write-Host "[Bootstrap] Auto-logon configured for '$Username'. Will be disabled on deployment completion."
+    # Save current UAC state so Cleanup can restore it exactly
+    $currentUAC = (Get-ItemProperty -Path $polSystem -Name 'EnableLUA' -ErrorAction SilentlyContinue).EnableLUA
+    if ($null -eq $currentUAC) { $currentUAC = 1 }   # default is enabled
+    Set-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -Value $currentUAC -Type DWord
+
+    # Disable UAC for the deployment window
+    Set-ItemProperty -Path $polSystem -Name 'EnableLUA' -Value 0 -Type DWord
+
+    Write-Host "[Bootstrap] Auto-logon configured for '$Username'."
+    Write-Host '[Bootstrap] UAC temporarily disabled for deployment (will be restored by Cleanup).'
+    Write-Host '[Bootstrap] NOTE: A reboot is required before UAC change takes effect.'
 }
 
 function Write-BootstrapLog {
