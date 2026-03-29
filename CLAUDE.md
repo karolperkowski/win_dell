@@ -159,16 +159,24 @@ which is a justified bypass for writing sub-keys.
 
 ## Scheduled tasks
 
-Three tasks, three purposes:
+Five tasks, each with a specific purpose and lifecycle:
 
 | Task | Runs as | Window | Registered by | Removed by |
 |---|---|---|---|---|
-| `WinDeploy-Resume` | SYSTEM | Hidden | bootstrap.ps1 | Cleanup.ps1 |
-| `WinDeploy-Monitor` | Users | Visible | bootstrap.ps1 | Cleanup.ps1 |
-| `WinDeploy-Notify` | Users | Hidden | bootstrap.ps1 | Notify.ps1 (self) |
+| `WinDeploy-Resume` | SYSTEM | Hidden | Resilience.psm1 | Cleanup.ps1 |
+| `WinDeploy-Monitor` | Users | Visible | Resilience.psm1 | Cleanup.ps1 |
+| `WinDeploy-Notify` | Users | Hidden | Resilience.psm1 | Notify.ps1 (self) |
+| `WinDeploy-AutoLogonSafety` | SYSTEM | Hidden | Resilience.psm1 | After 6h (self-deletes) |
+| `WinDeploy-Watchdog` | SYSTEM | Hidden | Resilience.psm1 | Never (permanent) |
 
-`WinDeploy-Notify` intentionally survives Cleanup so it can fire on the first
-clean boot after deployment and tell the user everything is done.
+`WinDeploy-Notify` intentionally survives Cleanup so it fires on the first clean boot.
+`WinDeploy-AutoLogonSafety` disables auto-logon unconditionally 6 hours after bootstrap,
+regardless of whether Cleanup ever runs — protects against deployment getting stuck.
+`WinDeploy-Watchdog` runs every 30 minutes and kills any Orchestrator process older than 4 hours.
+
+**Task self-healing:** `Resilience.psm1::Assert-ScheduledTasks` is called at the top
+of every bootstrap and orchestrator run. It re-registers any missing tasks automatically.
+Deleting tasks manually is fully recoverable by re-running `irm ... | iex`.
 
 ---
 

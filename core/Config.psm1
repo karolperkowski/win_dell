@@ -27,9 +27,11 @@ $Script:TS_QR_PNG   = Join-Path $Script:DEPLOY_ROOT 'tailscale_qr.png'
 # ---------------------------------------------------------------------------
 # Scheduled task names
 # ---------------------------------------------------------------------------
-$Script:TASK_RESUME  = 'WinDeploy-Resume'
-$Script:TASK_MONITOR = 'WinDeploy-Monitor'
-$Script:TASK_NOTIFY  = 'WinDeploy-Notify'
+$Script:TASK_RESUME   = 'WinDeploy-Resume'
+$Script:TASK_MONITOR  = 'WinDeploy-Monitor'
+$Script:TASK_NOTIFY   = 'WinDeploy-Notify'
+$Script:TASK_SAFETY   = 'WinDeploy-AutoLogonSafety'
+$Script:TASK_WATCHDOG = 'WinDeploy-Watchdog'
 
 # ---------------------------------------------------------------------------
 # Pipeline: canonical stage order and display labels
@@ -72,6 +74,8 @@ $WD = [PSCustomObject]@{
     TaskResume          = $Script:TASK_RESUME
     TaskMonitor         = $Script:TASK_MONITOR
     TaskNotify          = $Script:TASK_NOTIFY
+    TaskSafety          = $Script:TASK_SAFETY
+    TaskWatchdog        = $Script:TASK_WATCHDOG
     StageOrder          = $Script:STAGE_ORDER
     StageLabels         = $Script:STAGE_LABELS
     RebootAllowedStages = $Script:REBOOT_ALLOWED_STAGES

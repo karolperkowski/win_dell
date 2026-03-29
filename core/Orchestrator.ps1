@@ -54,6 +54,13 @@ $Script:CoreDir   = $PSScriptRoot
 Write-Early "RepoRoot : $Script:RepoRoot"
 Write-Early "CoreDir  : $Script:CoreDir"
 
+# Resilience module first — validates dirs, state, and tasks before anything else
+try {
+    Import-Module (Join-Path $Script:CoreDir 'Resilience.psm1') -DisableNameChecking -Force
+    Write-Early 'Resilience.psm1 loaded OK'
+    Invoke-ResilienceChecks -CalledFrom 'Orchestrator' -RepoRoot $Script:RepoRoot
+} catch { Write-Early "Resilience.psm1 failed (non-fatal): $($_.Exception.Message)" }
+
 try {
     Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force
     Write-Early 'Config.psm1 loaded OK'

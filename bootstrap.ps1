@@ -27,7 +27,23 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
+$ConfirmPreference   = 'None'
+
+# ---------------------------------------------------------------------------
+# Resilience module loaded first — before any other import.
+# Creates log directory, validates state file, re-registers missing tasks.
+# Self-contained: no dependency on other WinDeploy modules.
+# ---------------------------------------------------------------------------
+$Script:_resPath = Join-Path $PSScriptRoot 'core\Resilience.psm1'
+if (Test-Path $Script:_resPath) {
+    Import-Module $Script:_resPath -DisableNameChecking -Force
+} else {
+    # Absolute fallback if even Resilience.psm1 is missing
+    $earlyLog = 'C:\ProgramData\WinDeploy\Logs\early.log'
+    $earlyDir = Split-Path $earlyLog
+    if (-not (Test-Path $earlyDir)) { New-Item -ItemType Directory $earlyDir -Force | Out-Null }
+    Add-Content $earlyLog "WARNING: Resilience.psm1 not found at $Script:_resPath" -Encoding UTF8
+}
 
 # ---------------------------------------------------------------------------
 # Region: Constants
@@ -251,11 +267,13 @@ function Write-BootstrapLog {
 try {
     # Step 1 - Elevation guard
     if (-not $NoElevation -and -not (Test-AdminPrivilege)) {
-        Invoke-SelfElevation   # does not return
+        Invoke-SelfElevation
     }
 
-    # Step 2 - Stable local directories
-    Initialize-DeployDirectories
+    # Step 2 - Resilience checks: directories, state file integrity, task validation
+    if (Get-Command Invoke-ResilienceChecks -ErrorAction SilentlyContinue) {
+        Invoke-ResilienceChecks -CalledFrom 'bootstrap' -RepoRoot $RepoRoot
+    }
 
     Write-BootstrapLog 'Bootstrap started.'
     Write-BootstrapLog "Source repo: $RepoRoot"
