@@ -260,6 +260,103 @@ function Invoke-StageContractCheck {
 }
 
 # ---------------------------------------------------------------------------
+# Check 6: State property cross-reference
+# Validates that:
+#   (a) Every key Monitor.ps1 reads via Get-StateProp exists in State.psm1's schema
+#   (b) Every key State.psm1 defines is present in bootstrap.ps1's initial write
+#   (c) No $state.X direct access in Monitor.ps1 (must use Get-StateProp)
+#
+# This rule was added after a series of runtime crashes caused by state
+# properties being read with the wrong case or missing from the initial write.
+# ---------------------------------------------------------------------------
+function Invoke-StatePropertyCheck {
+    Write-LintLog "`nChecking state property cross-references..."
+
+    $statePsm1     = Join-Path $RepoRoot 'core\State.psm1'
+    $bootstrapPs1  = Join-Path $RepoRoot 'bootstrap.ps1'
+    $monitorPs1    = Join-Path $RepoRoot 'core\Monitor.ps1'
+
+    if (-not (Test-Path $statePsm1) -or -not (Test-Path $bootstrapPs1) -or -not (Test-Path $monitorPs1)) {
+        Write-LintLog '  Skipping state check - one or more required files not found.' WARN
+        return
+    }
+
+    $stateContent     = Get-Content $statePsm1    -Raw
+    $bootstrapContent = Get-Content $bootstrapPs1 -Raw
+    $monitorContent   = Get-Content $monitorPs1   -Raw
+    $monitorLines     = Get-Content $monitorPs1
+
+    # --- Extract the canonical schema from State.psm1 ---
+    # Keys are defined as string literals in hashtable assignments:
+    # $state['KeyName'] = ... or $initialState = [ordered]@{ KeyName = ... }
+    $schemaKeys = [System.Collections.Generic.HashSet[string]]::new()
+    $stateContent | Select-String -Pattern "\\\$state\['([A-Za-z][A-Za-z0-9]+)'\]" -AllMatches |
+        ForEach-Object { $_.Matches } | ForEach-Object { $null = $schemaKeys.Add($_.Groups[1].Value) }
+    $stateContent | Select-String -Pattern "^\s{8}([A-Z][A-Za-z0-9]+)\s+=" -AllMatches |
+        ForEach-Object { $_.Matches } | ForEach-Object { $null = $schemaKeys.Add($_.Groups[1].Value) }
+
+    # --- Extract keys bootstrap.ps1 writes in the initial state ---
+    $bootKeys = [System.Collections.Generic.HashSet[string]]::new()
+    # Match lines inside the initialState hashtable block
+    $inBlock = $false
+    foreach ($line in (Get-Content $bootstrapPs1)) {
+        if ($line -match 'initialState\s*=\s*\[ordered\]@\{') { $inBlock = $true; continue }
+        if ($inBlock) {
+            if ($line -match '^\s*\}') { $inBlock = $false; continue }
+            if ($line -match "^\s+([A-Z][A-Za-z0-9]+)\s*=") {
+                $null = $bootKeys.Add($Matches[1])
+            }
+        }
+    }
+
+    # --- Extract keys Monitor.ps1 reads via Get-StateProp ---
+    $monitorKeys = [System.Collections.Generic.HashSet[string]]::new()
+    $monitorContent | Select-String -Pattern "Get-StateProp\s+\`\$state\s+'([A-Za-z][A-Za-z0-9]+)'" -AllMatches |
+        ForEach-Object { $_.Matches } | ForEach-Object { $null = $monitorKeys.Add($_.Groups[1].Value) }
+
+    # --- Rule A: Monitor reads a key not in the schema ---
+    foreach ($key in $monitorKeys) {
+        if (-not $schemaKeys.Contains($key)) {
+            # Find the line number
+            $lineNum = 0
+            for ($i = 0; $i -lt $monitorLines.Count; $i++) {
+                if ($monitorLines[$i] -match [regex]::Escape($key)) { $lineNum = $i + 1; break }
+            }
+            Add-Violation -File $monitorPs1 -Line $lineNum `
+                -Rule 'State-UnknownKey' `
+                -Message "Monitor reads state key '$key' which is not defined in State.psm1 schema."
+        }
+    }
+
+    # --- Rule B: Schema key missing from bootstrap initial write ---
+    # Only flag keys that are writable (not read-only computed fields)
+    $writeableKeys = $schemaKeys | Where-Object { $_ -notin @('SchemaVersion') }
+    foreach ($key in $writeableKeys) {
+        if ($bootKeys.Count -gt 0 -and -not $bootKeys.Contains($key)) {
+            Add-Violation -File $bootstrapPs1 -Line '0' `
+                -Rule 'State-MissingInitialKey' -Severity 'Warning' `
+                -Message "Schema key '$key' is defined in State.psm1 but missing from bootstrap.ps1 initial state write. Monitor may crash if it launches before Orchestrator re-initialises state."
+        }
+    }
+
+    # --- Rule C: Direct $state.X access in Monitor (must use Get-StateProp) ---
+    for ($i = 0; $i -lt $monitorLines.Count; $i++) {
+        $line = $monitorLines[$i]
+        if ($line.TrimStart().StartsWith('#')) { continue }
+        # Match $state.PropertyName but not $state[ which is hashtable access
+        if ($line -match '\$state\.([A-Za-z][A-Za-z0-9]+)' -and $line -notmatch '\$state\[') {
+            Add-Violation -File $monitorPs1 -Line ($i + 1) `
+                -Rule 'State-DirectAccess' `
+                -Message "Direct `$state.$($Matches[1]) access in Monitor. Use Get-StateProp `$state '$($Matches[1])' <default> to avoid crashes on missing or null properties."
+        }
+    }
+
+    Write-LintLog "  Schema keys   : $($schemaKeys.Count)"
+    Write-LintLog "  Bootstrap keys: $($bootKeys.Count)"
+    Write-LintLog "  Monitor reads : $($monitorKeys.Count)"
+}
+
+# ---------------------------------------------------------------------------
 # Run all checks
 # ---------------------------------------------------------------------------
 Write-LintLog "`n=== WinDeploy Lint Runner ===" Cyan
@@ -270,6 +367,7 @@ Invoke-PS51CompatCheck
 Invoke-ScheduledTaskCheck
 Invoke-HardcodedPathCheck
 Invoke-StageContractCheck
+Invoke-StatePropertyCheck
 
 # ---------------------------------------------------------------------------
 # Report
