@@ -95,7 +95,7 @@ try {
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="WinDeploy Monitor" Width="640" Height="760"
-    ResizeMode="CanMinimize" WindowStartupLocation="Manual"
+    ResizeMode="CanMinimize" WindowStartupLocation="CenterScreen"
     Background="#0F0F0F" Foreground="#E0E0E0" FontFamily="Segoe UI">
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid Margin="20">
@@ -471,6 +471,26 @@ $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds($REFRESH_MS)
 $timer.Add_Tick({ try { Update-UI } catch { Show-MonitorError "Refresh error: $($_.Exception.Message)" } })
 $Window.Add_Loaded({
+    # Clamp window into the primary screen's work area.
+    # CenterScreen handles the normal case; this catches edge cases like
+    # a saved position from a now-disconnected second monitor.
+    $workArea = [System.Windows.SystemParameters]::WorkArea
+    $win = $Window
+
+    # Ensure the window is not wider/taller than the work area
+    if ($win.ActualWidth  -gt $workArea.Width)  { $win.Width  = $workArea.Width  - 40 }
+    if ($win.ActualHeight -gt $workArea.Height) { $win.Height = $workArea.Height - 40 }
+
+    # Clamp left/top so the window is fully visible
+    if ($win.Left -lt $workArea.Left) { $win.Left = $workArea.Left + 20 }
+    if ($win.Top  -lt $workArea.Top)  { $win.Top  = $workArea.Top  + 20 }
+    if (($win.Left + $win.ActualWidth)  -gt $workArea.Right)  {
+        $win.Left = $workArea.Right - $win.ActualWidth - 20
+    }
+    if (($win.Top  + $win.ActualHeight) -gt $workArea.Bottom) {
+        $win.Top  = $workArea.Bottom - $win.ActualHeight - 20
+    }
+
     try { Update-UI } catch {
         Show-MonitorError "Startup error: $($_.Exception.Message)"
     }
