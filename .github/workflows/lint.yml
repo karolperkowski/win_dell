@@ -23,9 +23,11 @@ jobs:
           Write-Host "PSScriptAnalyzer $($(Get-Module -ListAvailable PSScriptAnalyzer).Version) installed."
 
       - name: Run lint checks
-        shell: pwsh
+        shell: powershell
         run: |
-          $result = & powershell.exe -ExecutionPolicy Bypass -File lint.ps1 -Strict
+          $repoRoot = $env:GITHUB_WORKSPACE
+          Write-Host "Running lint against: $repoRoot"
+          & powershell.exe -ExecutionPolicy Bypass -File "$repoRoot\lint.ps1" -RepoRoot "$repoRoot" -Strict
           exit $LASTEXITCODE
 
       - name: Upload lint report on failure

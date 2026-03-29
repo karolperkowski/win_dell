@@ -21,13 +21,26 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot   = $PSScriptRoot,
-    [switch]$FixAuto,       # Attempt auto-fix where PSScriptAnalyzer supports it
-    [switch]$Strict         # Treat warnings as errors
+    [string]$RepoRoot = '',
+    [switch]$FixAuto,
+    [switch]$Strict
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot is empty when powershell.exe is called from inside a pwsh
+# session (e.g. GitHub Actions). Fall back to the current working directory.
+if (-not $RepoRoot) {
+    $RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+}
+
+if (-not (Test-Path $RepoRoot)) {
+    Write-Error "RepoRoot '$RepoRoot' does not exist. Run from the repo root or pass -RepoRoot explicitly."
+    exit 1
+}
+
+Write-Host "Lint root: $RepoRoot"
 
 $Script:Violations = [System.Collections.Generic.List[PSCustomObject]]::new()
 $Script:FilesTested = 0
