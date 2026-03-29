@@ -216,12 +216,12 @@ function Assert-ScheduledTasks {
                 $launcherContent = @"
 `$log = '$logFile'
 `$ts  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-Add-Content `$log "[`$ts] Task '$($def.Name)' started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)" -Encoding UTF8
+[System.IO.File]::AppendAllText(`$log, "[`$ts] Task '$($def.Name)' started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)`r`n", [System.Text.Encoding]::UTF8)
 try {
     & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '$scriptPath' *>> `$log
-    Add-Content `$log "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Exited: `$LASTEXITCODE" -Encoding UTF8
+    [System.IO.File]::AppendAllText(`$log, "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Exited: `$LASTEXITCODE`r`n", [System.Text.Encoding]::UTF8)
 } catch {
-    Add-Content `$log "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] LAUNCHER ERROR: `$(`$_.Exception.Message)" -Encoding UTF8
+    [System.IO.File]::AppendAllText(`$log, "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] LAUNCHER ERROR: `$(`$_.Exception.Message)`r`n", [System.Text.Encoding]::UTF8)
 }
 "@
                 $launcherContent | Set-Content -Path $launcherPath -Encoding UTF8
