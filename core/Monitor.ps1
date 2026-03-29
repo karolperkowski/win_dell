@@ -138,6 +138,9 @@ try {
         <StackPanel>
           <TextBlock x:Name="TitleLabel" Text="Deployment in progress" FontSize="17" FontWeight="Medium" Foreground="#E0E0E0"/>
           <TextBlock x:Name="SubtitleLabel" Text="Initialising..." FontSize="12" Foreground="#555555" Margin="0,3,0,0"/>
+          <TextBlock x:Name="VersionLabel" Text="" FontSize="10" Foreground="#336699"
+                     Cursor="Hand" TextDecorations="Underline" Margin="0,3,0,0"
+                     ToolTip="Open this commit on GitHub"/>
         </StackPanel>
         <Border Grid.Column="1" x:Name="StatusBorder" Background="#0E1520" BorderBrush="#1A3050"
                 BorderThickness="1" CornerRadius="4" Padding="10,5" VerticalAlignment="Center">
@@ -274,6 +277,7 @@ try {
 
 $TitleLabel           = $Window.FindName('TitleLabel')
 $SubtitleLabel        = $Window.FindName('SubtitleLabel')
+$VersionLabel         = $Window.FindName('VersionLabel')
 $StatusBadge          = $Window.FindName('StatusBadge')
 $StatusBorder         = $Window.FindName('StatusBorder')
 $ElapsedLabel         = $Window.FindName('ElapsedLabel')
@@ -567,6 +571,36 @@ function Update-UI {
         }
     } catch {}
 }
+
+# --- Load version from manifest.json and wire up commit link ---
+$Script:CommitUrl = ''
+try {
+    $manifestPath = Join-Path $Script:_scriptDir '..\manifest.json'
+    if (-not (Test-Path $manifestPath)) {
+        $manifestPath = Join-Path $DEPLOY_ROOT 'repo\manifest.json'
+    }
+    if (Test-Path $manifestPath) {
+        $m = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $sha   = $m.commit_sha
+        $repo  = $m.repository
+        $genAt = try { [datetime]::Parse($m.generated_at).ToString('yyyy-MM-dd HH:mm') } catch { '' }
+        if ($sha -and $sha -ne 'pending') {
+            $short = $sha.Substring(0, 7)
+            $Script:CommitUrl = "https://github.com/$repo/commit/$sha"
+            $VersionLabel.Text = "commit $short  ·  $genAt"
+        } else {
+            $VersionLabel.Text = 'commit pending (manifest not signed yet)'
+        }
+    }
+} catch {
+    $VersionLabel.Text = ''
+}
+
+$VersionLabel.Add_MouseLeftButtonUp({
+    if ($Script:CommitUrl) {
+        try { Start-Process $Script:CommitUrl } catch {}
+    }
+})
 
 $RunNowBtn.Add_Click({
     try {
