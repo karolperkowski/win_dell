@@ -110,11 +110,10 @@ function Get-VerifiedManifest {
     # Parse and return
     $obj = $manifestJson | ConvertFrom-Json
     return @{
-        CommitSha  = $obj.commit_sha
-        ZipUrl     = $obj.zip_url
-        ZipSha256  = $obj.zip_sha256
-        ZipSha256  = $obj.zip_sha256
-        GeneratedAt= $obj.generated_at
+        CommitSha   = $obj.commit_sha
+        ZipUrl      = $obj.zip_url
+        ZipSha256   = $obj.zip_sha256
+        GeneratedAt = $obj.generated_at
     }
 }
 
