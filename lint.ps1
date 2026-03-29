@@ -295,7 +295,7 @@ function Invoke-StatePropertyCheck {
     $schemaKeys = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($ln in $stateLines) {
         # Match $state['KeyName'] = ...
-        if ($ln -match "\$state\['([A-Za-z][A-Za-z0-9]+)'\]") { $null = $schemaKeys.Add($Matches[1]) }
+        if ($ln -match '\$state\[''([A-Za-z][A-Za-z0-9]+)''\]') { $null = $schemaKeys.Add($Matches[1]) }
         # Match indented PascalCase key assignments in the schema template
         if ($ln -match '^\s{6,12}([A-Z][a-zA-Z0-9]+)\s*=\s') { $null = $schemaKeys.Add($Matches[1]) }
     }
