@@ -62,7 +62,7 @@ try {
 } catch { Write-Early "Resilience.psm1 failed (non-fatal): $($_.Exception.Message)" }
 
 try {
-    Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force
+    Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force -Global
     Write-Early 'Config.psm1 loaded OK'
 } catch { Write-Early "FATAL: Config.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
