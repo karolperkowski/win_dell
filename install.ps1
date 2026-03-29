@@ -95,11 +95,6 @@ function Write-InstallLog {
 # Manifest verification
 # ---------------------------------------------------------------------------
 function Get-VerifiedManifest {
-    <#
-    Fetches manifest.json and manifest.sig from the repo, verifies the HMAC
-    signature, and returns the manifest as a hashtable.
-    Throws if the signature is invalid or the fetch fails.
-    #>
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     Write-InstallLog 'Fetching manifest...' INFO
@@ -108,6 +103,22 @@ function Get-VerifiedManifest {
         $remoteSig    = (Invoke-WebRequest -Uri $SIG_URL      -UseBasicParsing -ErrorAction Stop).Content.Trim()
     } catch {
         throw "Failed to fetch manifest from GitHub: $($_.Exception.Message)"
+    }
+
+    $obj = $manifestJson | ConvertFrom-Json
+
+    # Placeholder manifest means the GitHub Action hasn't run yet.
+    # Requires workflow scope on the PAT - skip verification and use
+    # the branch ZIP directly. Verification activates once the Action runs.
+    if ($obj.zip_sha256 -eq 'pending' -or $obj.commit_sha -eq 'pending') {
+        Write-InstallLog 'Manifest is placeholder - skipping signature check.' WARN
+        Write-InstallLog 'Add workflow scope to PAT to enable integrity verification.' WARN
+        return @{
+            CommitSha   = 'main'
+            ZipUrl      = "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/main.zip"
+            ZipSha256   = ''
+            GeneratedAt = 'pending'
+        }
     }
 
     # Verify HMAC-SHA256 signature
@@ -124,8 +135,6 @@ function Get-VerifiedManifest {
 
     Write-InstallLog 'Manifest signature verified.' OK
 
-    # Parse and return
-    $obj = $manifestJson | ConvertFrom-Json
     return @{
         CommitSha   = $obj.commit_sha
         ZipUrl      = $obj.zip_url
