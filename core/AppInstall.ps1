@@ -63,7 +63,7 @@ function Test-AppInstalledByRegistry {
 
     foreach ($path in $uninstallPaths) {
         $entries = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -like "*$DisplayName*" }
+            Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -like "*$DisplayName*" }
 
         foreach ($entry in $entries) {
             if ($MinVersion -and $entry.DisplayVersion) {

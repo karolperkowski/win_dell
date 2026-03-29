@@ -233,10 +233,10 @@ try {
         <StackPanel Grid.Column="1" Orientation="Horizontal">
           <TextBlock x:Name="CloseCountdown" Text="" FontSize="10" Foreground="#555555"
                      VerticalAlignment="Center" Margin="0,0,8,0"/>
-          <Button x:Name="CloseBtn" Content="✕ Close" FontSize="10" Padding="8,3"
+          <Button x:Name="CloseBtn" Content="X Close" FontSize="10" Padding="8,3"
                   Background="#1A2030" Foreground="#4ADE80" BorderBrush="#2D4A2D"
                   Cursor="Hand" Visibility="Collapsed" ToolTip="Close the monitor window" Margin="0,0,8,0"/>
-          <Button x:Name="RunNowBtn" Content="▶ Run Now" FontSize="10" Padding="8,3"
+          <Button x:Name="RunNowBtn" Content="> Run Now" FontSize="10" Padding="8,3"
                   Background="#1A2030" Foreground="#60A5FA" BorderBrush="#1A3050"
                   Cursor="Hand" ToolTip="Start the orchestrator immediately without waiting for a reboot"/>
         </StackPanel>
@@ -357,10 +357,10 @@ function New-Thickness ($All) { [System.Windows.Thickness]::new($All) }
 
 function Add-StageRow ($Label, $Status, $Time) {
     $colours = switch ($Status) {
-        'complete' { @{ bg='#0E1A0E'; border='#1D3A1D'; icon=[char]0x2713; ic='#4ADE80'; name='#CCCCCC'; time='#4ADE80' } }
-        'running'  { @{ bg='#0E1520'; border='#1A3050'; icon=[char]0x25B6; ic='#60A5FA'; name='#E0E0E0'; time='#60A5FA' } }
-        'failed'   { @{ bg='#1F0E0E'; border='#3D1A1A'; icon=[char]0x2717; ic='#F87171'; name='#F87171'; time='#F87171' } }
-        default    { @{ bg='#131313'; border='#1E1E1E'; icon=[char]0x2013; ic='#444444'; name='#444444'; time='#444444' } }
+        'complete' { @{ bg='#0E1A0E'; border='#1D3A1D'; icon='+'; ic='#4ADE80'; name='#CCCCCC'; time='#4ADE80' } }
+        'running'  { @{ bg='#0E1520'; border='#1A3050'; icon='>'; ic='#60A5FA'; name='#E0E0E0'; time='#60A5FA' } }
+        'failed'   { @{ bg='#1F0E0E'; border='#3D1A1A'; icon='X'; ic='#F87171'; name='#F87171'; time='#F87171' } }
+        default    { @{ bg='#131313'; border='#1E1E1E'; icon='-'; ic='#444444'; name='#444444'; time='#444444' } }
     }
 
     $border = [System.Windows.Controls.Border]@{
@@ -439,7 +439,7 @@ function Update-UI {
         try {
             $task = Get-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
             $orchStatus = switch ($task.State) {
-                'Running' { '● Orchestrator running - waiting for state.json...' }
+                'Running' { '* Orchestrator running - waiting for state.json...' }
                 'Ready'   { '○ Orchestrator not yet started - waiting for trigger...' }
                 default   { "Task state: $($task.State)" }
             }
@@ -563,7 +563,7 @@ function Update-UI {
     try {
         $task = Get-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
         $isRunning = $task.State -eq 'Running'
-        $orchStatus = if ($isRunning) { '● Running' } else { '○ Waiting' }
+        $orchStatus = if ($isRunning) { '* Running' } else { '- Waiting' }
         $RunNowBtn.IsEnabled = -not $isRunning
     } catch { $orchStatus = 'task?'; $RunNowBtn.IsEnabled = $false }
 
@@ -578,7 +578,7 @@ function Update-UI {
 
     # Highlight footer in amber when state hasn't changed in 10+ minutes and task isn't running
     try {
-        if ($ageSecs -gt 600 -and $orchStatus -ne '● Running') {
+        if ($ageSecs -gt 600 -and $orchStatus -ne '* Running') {
             $FooterNote.Foreground = New-Brush '#F59E0B'   # amber - stale, nothing running
         } else {
             $FooterNote.Foreground = New-Brush '#555555'
