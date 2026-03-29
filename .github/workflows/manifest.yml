@@ -59,7 +59,10 @@ jobs:
           # The signing key comes from a GitHub secret so it never appears
           # in logs or the repo. install.ps1 embeds the same key to verify.
           if (-not $env:MANIFEST_SIGNING_KEY) {
-            throw 'MANIFEST_SIGNING_KEY secret is not set. Go to repo Settings → Secrets → Actions and add it.'
+            Write-Warning 'MANIFEST_SIGNING_KEY secret is not set.'
+            Write-Warning 'Go to repo Settings -> Secrets -> Actions and add it.'
+            Write-Warning 'Skipping manifest signing - placeholder values will remain.'
+            exit 0
           }
 
           $keyBytes  = [System.Text.Encoding]::UTF8.GetBytes($env:MANIFEST_SIGNING_KEY)

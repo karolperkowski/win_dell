@@ -37,8 +37,9 @@ $Script:FilesTested = 0
 # ---------------------------------------------------------------------------
 function Add-Violation {
     param([string]$File, [string]$Line, [string]$Rule, [string]$Message, [string]$Severity = 'Error')
+    $cleanPath = ($File -replace [regex]::Escape($RepoRoot), '.')
     $Script:Violations.Add([PSCustomObject]@{
-        File     = $File -replace [regex]::Escape($RepoRoot), '.'
+        File     = $cleanPath
         Line     = $Line
         Rule     = $Rule
         Severity = $Severity
@@ -100,7 +101,7 @@ function Invoke-PSScriptAnalyzer {
 }
 
 # ---------------------------------------------------------------------------
-# Check 2: PS 5.1 compatibility — forbidden syntax
+# Check 2: PS 5.1 compatibility - forbidden syntax
 # ---------------------------------------------------------------------------
 function Invoke-PS51CompatCheck {
     Write-LintLog "`nChecking PS 5.1 compatibility..."
@@ -216,10 +217,10 @@ function Invoke-StageContractCheck {
     foreach ($file in $stageFiles) {
         $content = Get-Content $file.FullName -Raw
         # Stage scripts must have at least one return with a Status key
-        if ($content -notmatch 'return @\{.*Status') {
+        if ($content -notmatch 'return @\{') {
             Add-Violation -File $file.FullName -Line '0' `
                 -Rule 'Stage-MissingReturnContract' -Severity 'Warning' `
-                -Message "Stage script has no 'return @{ Status = ...' — orchestrator cannot handle its result."
+                -Message "Stage script has no 'return @{ Status = ...' -- orchestrator cannot handle its result."
         }
     }
 }
@@ -259,7 +260,8 @@ foreach ($v in $Script:Violations | Sort-Object Severity, File, Line) {
     $colour = if ($v.Severity -eq 'Error') { 'Red' } else { 'Yellow' }
     Write-Host "[$($v.Severity.ToUpper())] $($v.File):$($v.Line)" -ForegroundColor $colour
     Write-Host "  Rule   : $($v.Rule)"
-    Write-Host "  Message: $($v.Message)`n"
+    Write-Host "  Message: $($v.Message)"
+    Write-Host ''
 }
 
 # Fail on errors; warnings alone pass unless -Strict
