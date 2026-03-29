@@ -218,7 +218,10 @@ function Assert-ScheduledTasks {
 `$ts  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 [System.IO.File]::AppendAllText(`$log, "[`$ts] Task '$($def.Name)' started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)`r`n", [System.Text.Encoding]::UTF8)
 try {
-    & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '$scriptPath' *>> `$log
+    # Force UTF-8 output encoding to prevent UTF-16LE wide-character log files
+    `$OutputEncoding = [System.Text.Encoding]::UTF8
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '$scriptPath' *>&1 | Out-File -FilePath `$log -Append -Encoding UTF8
     [System.IO.File]::AppendAllText(`$log, "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Exited: `$LASTEXITCODE`r`n", [System.Text.Encoding]::UTF8)
 } catch {
     [System.IO.File]::AppendAllText(`$log, "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] LAUNCHER ERROR: `$(`$_.Exception.Message)`r`n", [System.Text.Encoding]::UTF8)

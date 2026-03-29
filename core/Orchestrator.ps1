@@ -36,7 +36,7 @@ function Write-Early {
     try {
         $dir = Split-Path $Script:_rawLog
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
-        Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
+        [System.IO.File]::AppendAllText($Script:_rawLog, $line + "`r`n", [System.Text.Encoding]::UTF8)
     } catch { Write-Host "[Orchestrator] Log write failed: $($_.Exception.Message)" }
 }
 Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
@@ -79,7 +79,7 @@ try {
     Write-Early 'Logging.psm1 loaded OK'
 } catch { Write-Early "FATAL: Logging.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
-$Script:TASK_NAME = $WD.TaskResume
+$Script:TASK_NAME = $Script:WD.TaskResume
 
 # Stage map: name → script. Execution order is driven by $WD.StageOrder in State.psm1.
 $Script:STAGE_SCRIPTS = [ordered]@{
@@ -93,7 +93,7 @@ $Script:STAGE_SCRIPTS = [ordered]@{
     Cleanup                  = Join-Path $Script:CoreDir 'Cleanup.ps1'
 }
 
-$Script:REBOOT_ALLOWED_STAGES    = $WD.RebootAllowedStages
+$Script:REBOOT_ALLOWED_STAGES    = $Script:WD.RebootAllowedStages
 $Script:MAX_CONSECUTIVE_FAILURES = 3
 
 # ---------------------------------------------------------------------------

@@ -108,9 +108,10 @@ function Test-AppInstalled {
 
     switch ($detect['Method']) {
         'Registry' {
+            $minVer = if ($detect['MinVersion']) { $detect['MinVersion'] } else { '' }
             return Test-AppInstalledByRegistry `
                 -DisplayName $detect['DisplayName'] `
-                -MinVersion  (if ($detect['MinVersion']) { $detect['MinVersion'] } else { '' })
+                -MinVersion  $minVer
         }
         'File' {
             return Test-AppInstalledByFile -FilePath $detect['FilePath']
