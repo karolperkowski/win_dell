@@ -21,7 +21,29 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'SilentlyContinue'
-$ConfirmPreference     = 'None'   # Notification failures must not be visible to user
+$ConfirmPreference     = 'None'
+
+# ---------------------------------------------------------------------------
+# Early logger - writes to disk before any Import-Module so startup
+# failures are always captured even if the logging module cannot load.
+# ---------------------------------------------------------------------------
+$Script:_rawLog = 'C:\ProgramData\WinDeploy\Logs\early.log'
+function Write-Early {
+    param([string]$Msg)
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "[$ts] $Msg"
+    Write-Host $line
+    try {
+        $dir = Split-Path $Script:_rawLog
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
+        Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
+    } catch {}
+}
+Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
+Write-Early "PSScriptRoot : $PSScriptRoot"
+Write-Early "Running as   : $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Write-Early "ExecutionPolicy: $(Get-ExecutionPolicy)"
+   # Notification failures must not be visible to user
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing

@@ -21,7 +21,29 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
+$ConfirmPreference   = 'None'
+
+# ---------------------------------------------------------------------------
+# Early logger - writes to disk before any Import-Module so startup
+# failures are always captured even if the logging module cannot load.
+# ---------------------------------------------------------------------------
+$Script:_rawLog = 'C:\ProgramData\WinDeploy\Logs\early.log'
+function Write-Early {
+    param([string]$Msg)
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = "[$ts] $Msg"
+    Write-Host $line
+    try {
+        $dir = Split-Path $Script:_rawLog
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
+        Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
+    } catch {}
+}
+Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
+Write-Early "PSScriptRoot : $PSScriptRoot"
+Write-Early "Running as   : $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Write-Early "ExecutionPolicy: $(Get-ExecutionPolicy)"
+   # Prevent any cmdlet from prompting during unattended run
 
 # ---------------------------------------------------------------------------
 # Resolve module paths relative to this script's location
@@ -29,9 +51,23 @@ $ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unatt
 $Script:RepoRoot  = Split-Path $PSScriptRoot -Parent
 $Script:CoreDir   = $PSScriptRoot
 
-Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force
-Import-Module (Join-Path $Script:CoreDir 'State.psm1')   -DisableNameChecking -Force
-Import-Module (Join-Path $Script:CoreDir 'Logging.psm1') -DisableNameChecking -Force
+Write-Early "RepoRoot : $Script:RepoRoot"
+Write-Early "CoreDir  : $Script:CoreDir"
+
+try {
+    Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force
+    Write-Early 'Config.psm1 loaded OK'
+} catch { Write-Early "FATAL: Config.psm1 failed - $($_.Exception.Message)"; exit 1 }
+
+try {
+    Import-Module (Join-Path $Script:CoreDir 'State.psm1')   -DisableNameChecking -Force
+    Write-Early 'State.psm1 loaded OK'
+} catch { Write-Early "FATAL: State.psm1 failed - $($_.Exception.Message)"; exit 1 }
+
+try {
+    Import-Module (Join-Path $Script:CoreDir 'Logging.psm1') -DisableNameChecking -Force
+    Write-Early 'Logging.psm1 loaded OK'
+} catch { Write-Early "FATAL: Logging.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
 $Script:TASK_NAME = $WD.TaskResume
 
