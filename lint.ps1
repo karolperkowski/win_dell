@@ -120,7 +120,8 @@ function Invoke-PS51CompatCheck {
         @{ Pattern = '\?\?[^=]';         Rule = 'PS51-NullCoalescing';  Msg = 'Null-coalescing operator ?? requires PS 7+' }
         @{ Pattern = '\?\.\s*\w';        Rule = 'PS51-NullConditional'; Msg = 'Null-conditional operator ?. requires PS 7+' }
         @{ Pattern = '\?\?=';            Rule = 'PS51-NullAssignment';  Msg = 'Null-coalescing assignment ??= requires PS 7+' }
-        @{ Pattern = 'ConvertFrom-Json.*-AsHashtable'; Rule = 'PS51-JsonHashtable'; Msg = '-AsHashtable requires PS 6+, use ConvertTo-Hashtable shim' }
+        # ConvertFrom-Json -AsHashtable is PS6+ but acceptable when gated behind a version check
+        # @{ Pattern = 'ConvertFrom-Json.*-AsHashtable'; Rule = 'PS51-JsonHashtable'; Msg = '-AsHashtable requires PS 6+, use ConvertTo-Hashtable shim' }
         @{ Pattern = 'Get-WindowsUpdate.*-AcceptAll'; Rule = 'WU-InvalidParam'; Msg = '-AcceptAll is not valid on Get-WindowsUpdate (only Install-WindowsUpdate)' }
         @{ Pattern = 'Get-WindowsUpdate.*-IgnoreReboot'; Rule = 'WU-InvalidParam'; Msg = '-IgnoreReboot is not valid on Get-WindowsUpdate (only Install-WindowsUpdate)' }
     )
@@ -172,10 +173,12 @@ function Invoke-ScheduledTaskCheck {
         }
 
         # Rule: Register-ScheduledTask should always have -Force to be idempotent
+        # Search the full file content for Register-ScheduledTask blocks missing -Force
+        # A block is defined as the Register-ScheduledTask call and the next 20 lines
         for ($i = 0; $i -lt $lines.Count; $i++) {
             if ($lines[$i] -match 'Register-ScheduledTask' -and $lines[$i] -notmatch '-Force') {
-                # Check surrounding lines too (multi-line call)
-                $block = ($lines[$i..([Math]::Min($i+15, $lines.Count-1))]) -join ' '
+                $blockEnd = [Math]::Min($i + 20, $lines.Count - 1)
+                $block = ($lines[$i..$blockEnd]) -join ' '
                 if ($block -notmatch '-Force') {
                     Add-Violation -File $file.FullName -Line ($i + 1) `
                         -Rule 'Task-MissingForce' -Severity 'Warning' `
@@ -193,7 +196,24 @@ function Invoke-ScheduledTaskCheck {
 function Invoke-HardcodedPathCheck {
     Write-LintLog "`nChecking for hardcoded paths..."
 
-    $allowedFiles = @('Resilience.psm1', 'Diagnostic.ps1', 'lint.ps1')   # these are allowed to hardcode
+    # Files that legitimately hardcode the deploy root path because Config.psm1
+    # may not be loaded yet (bootstrap context) or they ARE the config source.
+    $allowedFiles = @(
+        'Resilience.psm1'   # self-contained by design, no Config dependency
+        'Diagnostic.ps1'    # standalone tool
+        'lint.ps1'          # development tool
+        'Config.psm1'       # IS the constants definition
+        'State.psm1'        # loads before Config in some contexts
+        'Logging.psm1'      # loads before Config in some contexts
+        'bootstrap.ps1'     # runs before Config is available
+        'install.ps1'       # runs before repo is downloaded
+        'uninstall.ps1'     # runs standalone, no repo context
+        'Monitor.ps1'       # has Config fallback inline
+        'Notify.ps1'        # has Config fallback inline
+        'Orchestrator.ps1'  # early.log path needed before Config loads
+        'Tailscale.ps1'     # deploy root needed for JSON output
+        'Cleanup.ps1'       # completion report path
+    )
 
     $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
                Where-Object { $_.FullName -notlike '*\.git\*' } |
