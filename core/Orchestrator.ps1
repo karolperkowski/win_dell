@@ -249,6 +249,13 @@ Initialize-Logger -Stage 'Orchestrator'
         Write-LogInfo "--- Starting stage: $stageName ---"
         $result = Invoke-Stage -StageName $stageName -ScriptPath $scriptPath -Config $config
 
+        # Validate result — stage must return @{ Status = '...'; Message = '...' }
+        if ($null -eq $result -or $result -isnot [hashtable] -or -not $result.ContainsKey('Status')) {
+            $resultType = if ($null -eq $result) { 'null' } else { $result.GetType().Name }
+            Write-LogError "Stage '$stageName' returned invalid result (type: $resultType). Expected hashtable with 'Status' key."
+            $result = @{ Status = 'Failed'; Message = "Invalid stage return value (type: $resultType)" }
+        }
+
         switch ($result.Status) {
 
             'Complete' {

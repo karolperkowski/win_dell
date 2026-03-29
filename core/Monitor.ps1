@@ -119,7 +119,7 @@ try {
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="WinDeploy Monitor" Width="640" Height="760"
-    ResizeMode="CanMinimize" WindowStartupLocation="CenterScreen"
+    ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen" MinWidth="500" MinHeight="400"
     Background="#0F0F0F" Foreground="#E0E0E0" FontFamily="Segoe UI">
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid Margin="20">
@@ -347,7 +347,12 @@ function Get-StageStatus ($State, $Name) {
     return 'waiting'
 }
 
-function New-Brush ($Hex) { [System.Windows.Media.BrushConverter]::new().ConvertFrom($Hex) }
+function New-Brush ($Hex) {
+    # Guard against arrays — switch can return Object[] if multiple branches match
+    if ($Hex -is [array]) { $Hex = $Hex[0] }
+    if (-not $Hex) { $Hex = '#555555' }
+    [System.Windows.Media.BrushConverter]::new().ConvertFrom([string]$Hex)
+}
 function New-Thickness ($All) { [System.Windows.Thickness]::new($All) }
 
 function Add-StageRow ($Label, $Status, $Time) {
