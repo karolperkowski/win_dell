@@ -37,13 +37,13 @@ $Script:TASK_NAME = $WD.TaskResume
 
 # Stage map: name → script. Execution order is driven by $WD.StageOrder in State.psm1.
 $Script:STAGE_SCRIPTS = [ordered]@{
-    WindowsUpdate            = Join-Path $Script:CoreDir 'WindowsUpdate.ps1'
     PowerSettings            = Join-Path $Script:CoreDir 'PowerSettings.ps1'
     Debloat                  = Join-Path $Script:CoreDir 'Debloat.ps1'
     WinTweaks                = Join-Path $Script:CoreDir 'WinTweaks.ps1'
     InstallDellSupportAssist = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallDellPowerManager  = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallTailscale         = Join-Path $Script:CoreDir 'Tailscale.ps1'
+    WindowsUpdate            = Join-Path $Script:CoreDir 'WindowsUpdate.ps1'
     Cleanup                  = Join-Path $Script:CoreDir 'Cleanup.ps1'
 }
 

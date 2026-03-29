@@ -35,24 +35,24 @@ $Script:TASK_NOTIFY  = 'WinDeploy-Notify'
 # Pipeline: canonical stage order and display labels
 # ---------------------------------------------------------------------------
 $Script:STAGE_ORDER = @(
-    'WindowsUpdate'
     'PowerSettings'
     'Debloat'
     'WinTweaks'
     'InstallDellSupportAssist'
     'InstallDellPowerManager'
     'InstallTailscale'
+    'WindowsUpdate'
     'Cleanup'
 )
 
 $Script:STAGE_LABELS = [ordered]@{
-    WindowsUpdate            = 'Windows Update'
     PowerSettings            = 'Power Settings'
     Debloat                  = 'Debloat'
     WinTweaks                = 'Windows Tweaks'
     InstallDellSupportAssist = 'Dell SupportAssist'
     InstallDellPowerManager  = 'Dell Power Manager'
     InstallTailscale         = 'Tailscale'
+    WindowsUpdate            = 'Windows Update'
     Cleanup                  = 'Cleanup'
 }
 
