@@ -63,6 +63,9 @@ try {
 
 try {
     Import-Module (Join-Path $Script:CoreDir 'Config.psm1')  -DisableNameChecking -Force -Global
+    # Explicitly pull $WD into script scope — Set-StrictMode -Version Latest
+    # does not reliably resolve module-exported variables across scopes in PS 5.1.
+    $Script:WD = Get-Variable -Name WD -Scope Global -ValueOnly
     Write-Early 'Config.psm1 loaded OK'
 } catch { Write-Early "FATAL: Config.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
