@@ -332,21 +332,18 @@ if ($Update) {
 
     Remove-Item $tempRepo -Recurse -Force -ErrorAction SilentlyContinue
 
-    Write-InstallLog '' INFO
-    Write-InstallLog '=================================================' OK
-    Write-InstallLog '  Scripts updated. State file preserved.' OK
-    Write-InstallLog "  Repo: $REPO_DIR" OK
-    Write-InstallLog '=================================================' OK
-    exit 0
+    Write-InstallLog 'Scripts updated - re-running bootstrap to restore any missing tasks...' INFO
+    # Fall through to bootstrap call below (no exit here)
 }
 
 # ── Fresh install mode ──
-if ($repoExists) {
-    Write-InstallLog 'Removing existing repo for fresh install...' WARN
-    Remove-Item $REPO_DIR -Recurse -Force
+if (-not $Update) {
+    if ($repoExists) {
+        Write-InstallLog 'Removing existing repo for fresh install...' WARN
+        Remove-Item $REPO_DIR -Recurse -Force
+    }
+    Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $REPO_DIR -ExpectedHash $EXPECTED_ZIP_HASH
 }
-
-Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $REPO_DIR -ExpectedHash $EXPECTED_ZIP_HASH
 
 # ---------------------------------------------------------------------------
 # Step 5: Verify the repo looks sane before handing off
