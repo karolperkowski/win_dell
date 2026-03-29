@@ -224,11 +224,13 @@ try {
             -ErrorAction SilentlyContinue
     }
 
-    # Step 8 - Kick off orchestrator. This call blocks until the stage completes
-    # or requests a reboot - the monitor window updates independently via the timer.
-    Write-BootstrapLog 'Launching orchestrator for first run...'
-    $orchestratorPath = Join-Path $localRepo 'core\Orchestrator.ps1'
-    & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $orchestratorPath
+    # Step 8 - Trigger orchestrator via the scheduled task (runs as SYSTEM).
+    # Running via the task avoids ACL issues - state.json and deploy root
+    # are locked to SYSTEM/Administrators, and the task runs with the
+    # correct privileges. The monitor updates independently via its timer.
+    Write-BootstrapLog 'Starting orchestrator via WinDeploy-Resume task...'
+    Start-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
+    Write-BootstrapLog 'Orchestrator task started. Monitor window will show progress.'
 
 } catch {
     $errMsg = "Bootstrap FATAL: $($_.Exception.Message) | Line $($_.InvocationInfo.ScriptLineNumber)"
