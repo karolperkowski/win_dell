@@ -67,20 +67,37 @@ function Assert-DeployDirectories {
             try {
                 New-Item -ItemType Directory -Path $dir -Force | Out-Null
                 Write-ResilienceLog "Created directory: $dir" OK
-
-                # Restrict ACL to SYSTEM + Administrators only
-                $acl = Get-Acl $dir
-                $acl.SetAccessRuleProtection($true, $false)
-                foreach ($identity in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
-                    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-                        $identity, 'FullControl', 'ContainerInherit,ObjectInherit',
-                        'None', 'Allow')
-                    $acl.AddAccessRule($rule)
-                }
-                Set-Acl -Path $dir -AclObject $acl
             } catch {
-                Write-ResilienceLog "Could not create/secure $dir : $($_.Exception.Message)" WARN
+                Write-ResilienceLog "Could not create $dir : $($_.Exception.Message)" WARN
+                continue
             }
+        }
+
+        # Set ACL on every run (not just on creation) so permissions are
+        # correct even if the directory already existed with wrong ACLs.
+        try {
+            $acl = Get-Acl $dir
+            $acl.SetAccessRuleProtection($true, $false)
+
+            # SYSTEM + Administrators: full control
+            foreach ($identity in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+                $acl.AddAccessRule(
+                    [System.Security.AccessControl.FileSystemAccessRule]::new(
+                        $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+            }
+
+            # BUILTIN\Users: Modify on Logs dir so Monitor/Notify tasks (which
+            # run as the interactive user) can write early.log and task logs.
+            # Restricted to LOG_DIR only - DEPLOY_ROOT stays Admins-only.
+            if ($dir -eq $Script:LOG_DIR) {
+                $acl.AddAccessRule(
+                    [System.Security.AccessControl.FileSystemAccessRule]::new(
+                        'BUILTIN\Users', 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+            }
+
+            Set-Acl -Path $dir -AclObject $acl
+        } catch {
+            Write-ResilienceLog "Could not set ACL on $dir : $($_.Exception.Message)" WARN
         }
     }
 }
