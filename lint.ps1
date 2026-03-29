@@ -302,7 +302,7 @@ function Invoke-StatePropertyCheck {
     $inInitBlock = $false
     $initDepth   = 0
     foreach ($ln in $stateLines) {
-        if ($ln -match '\$initialState\s*=\s*\[ordered\]@\{') { $inInitBlock = $true; $initDepth = 1; continue }
+        if ($ln -match '^\s+\$(state|initialState)\s*=\s*\[ordered\]@\{') { $inInitBlock = $true; $initDepth = 1; continue }
         if ($inInitBlock) {
             $initDepth += ([regex]::Matches($ln, '\{')).Count
             $initDepth -= ([regex]::Matches($ln, '\}')).Count

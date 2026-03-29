@@ -385,11 +385,6 @@ function Update-UI {
     $state = Read-JsonFile $STATE_FILE
     $ts    = Read-JsonFile $TS_JSON
 
-    if ($state) {
-        $started = try { [datetime]::Parse((Get-StateProp $state 'BootstrappedAt' '')).ToString('HH:mm:ss') } catch { '...' }
-        $SubtitleLabel.Text = "$env:COMPUTERNAME  ·  Started $started"
-        $ElapsedLabel.Text  = Format-Elapsed (Get-StateProp $state 'BootstrappedAt' '')
-        $RebootLabel.Text   = (Get-StateProp $state 'RebootCount' 0).ToString()
     if (-not $state) {
         # State file doesn't exist yet - check if orchestrator task is running
         try {
@@ -403,6 +398,11 @@ function Update-UI {
         $FooterNote.Text = $orchStatus
         return
     }
+
+    $started = try { [datetime]::Parse((Get-StateProp $state 'BootstrappedAt' '')).ToString('HH:mm:ss') } catch { '...' }
+    $SubtitleLabel.Text = "$env:COMPUTERNAME  ·  Started $started"
+    $ElapsedLabel.Text  = Format-Elapsed (Get-StateProp $state 'BootstrappedAt' '')
+    $RebootLabel.Text   = (Get-StateProp $state 'RebootCount' 0).ToString()
 
     $done  = @(Get-StateProp $state 'CompletedStages' @()).Count
     $total = $STAGE_ORDER.Count
