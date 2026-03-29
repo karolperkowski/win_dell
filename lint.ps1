@@ -173,17 +173,21 @@ function Invoke-ScheduledTaskCheck {
         }
 
         # Rule: Register-ScheduledTask should always have -Force to be idempotent
-        # Search the full file content for Register-ScheduledTask blocks missing -Force
-        # A block is defined as the Register-ScheduledTask call and the next 20 lines
+        # Use \b word boundary equivalent: match Register- but not Unregister-
+        # Also skip lines where it appears inside a quoted string (log messages)
         for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match 'Register-ScheduledTask' -and $lines[$i] -notmatch '-Force') {
-                $blockEnd = [Math]::Min($i + 20, $lines.Count - 1)
-                $block = ($lines[$i..$blockEnd]) -join ' '
-                if ($block -notmatch '-Force') {
-                    Add-Violation -File $file.FullName -Line ($i + 1) `
-                        -Rule 'Task-MissingForce' -Severity 'Warning' `
-                        -Message 'Register-ScheduledTask without -Force is not idempotent. Add -Force.'
-                }
+            $line = $lines[$i]
+            # Skip Unregister- lines and lines where it's inside a string literal
+            if ($line -notmatch '(?<![A-Za-z])Register-ScheduledTask') { continue }
+            if ($line -match 'Unregister-ScheduledTask') { continue }
+            if ($line -match "^[^#]*[`"'].*Register-ScheduledTask.*[`"']") { continue }
+            if ($line -match '-Force') { continue }
+            $blockEnd = [Math]::Min($i + 20, $lines.Count - 1)
+            $block = ($lines[$i..$blockEnd]) -join ' '
+            if ($block -notmatch '-Force') {
+                Add-Violation -File $file.FullName -Line ($i + 1) `
+                    -Rule 'Task-MissingForce' -Severity 'Warning' `
+                    -Message 'Register-ScheduledTask without -Force is not idempotent. Add -Force.'
             }
         }
     }
