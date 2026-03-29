@@ -217,8 +217,19 @@ try {
 
       <!-- Footer -->
       <Grid Grid.Row="8" Margin="0,12,0,0">
-        <TextBlock x:Name="FooterNote" Text="" FontSize="10" Foreground="#333333" VerticalAlignment="Center"/>
-        <TextBlock x:Name="CloseCountdown" Text="" FontSize="10" Foreground="#555555" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock x:Name="FooterNote" Text="" FontSize="10" Foreground="#333333"
+                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <TextBlock x:Name="CloseCountdown" Text="" FontSize="10" Foreground="#555555"
+                     VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <Button x:Name="RunNowBtn" Content="▶ Run Now" FontSize="10" Padding="8,3"
+                  Background="#1A2030" Foreground="#60A5FA" BorderBrush="#1A3050"
+                  Cursor="Hand" ToolTip="Start the orchestrator immediately without waiting for a reboot"/>
+        </StackPanel>
       </Grid>
 
       <!-- Error panel: visible on any error, stays open, never auto-dismisses -->
@@ -279,6 +290,7 @@ $TailscaleStatusBorder= $Window.FindName('TailscaleStatusBorder')
 $LogPanel             = $Window.FindName('LogPanel')
 $FooterNote           = $Window.FindName('FooterNote')
 $CloseCountdown       = $Window.FindName('CloseCountdown')
+$RunNowBtn            = $Window.FindName('RunNowBtn')
 $ErrorPanel           = $Window.FindName('ErrorPanel')
 $ErrorText            = $Window.FindName('ErrorText')
 $ErrorLogPath         = $Window.FindName('ErrorLogPath')
@@ -532,12 +544,10 @@ function Update-UI {
     # Is the Resume task currently running?
     try {
         $task = Get-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
-        $orchStatus = switch ($task.State) {
-            'Running' { '● Running' }
-            'Ready'   { '○ Waiting' }
-            default   { $task.State }
-        }
-    } catch { $orchStatus = 'task?' }
+        $isRunning = $task.State -eq 'Running'
+        $orchStatus = if ($isRunning) { '● Running' } else { '○ Waiting' }
+        $RunNowBtn.IsEnabled = -not $isRunning
+    } catch { $orchStatus = 'task?'; $RunNowBtn.IsEnabled = $false }
 
     # Last error from state
     $lastErr = Get-StateProp $state 'LastError' ''
@@ -547,7 +557,31 @@ function Update-UI {
     }
 
     $FooterNote.Text = "Updated $stateAge  ·  $orchStatus  ·  $(Get-Date -Format 'HH:mm:ss')$lastErrLine"
+
+    # Highlight footer in amber when state hasn't changed in 10+ minutes and task isn't running
+    try {
+        if ($ageSecs -gt 600 -and $orchStatus -ne '● Running') {
+            $FooterNote.Foreground = New-Brush '#F59E0B'   # amber - stale, nothing running
+        } else {
+            $FooterNote.Foreground = New-Brush '#555555'
+        }
+    } catch {}
 }
+
+$RunNowBtn.Add_Click({
+    try {
+        $task = Get-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
+        if ($task.State -eq 'Running') {
+            $FooterNote.Text = 'Orchestrator is already running.'
+        } else {
+            Start-ScheduledTask -TaskName 'WinDeploy-Resume' -ErrorAction Stop
+            $FooterNote.Text = 'Orchestrator started.'
+            $RunNowBtn.IsEnabled = $false
+        }
+    } catch {
+        $FooterNote.Text = "Could not start task: $($_.Exception.Message)"
+    }
+})
 
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds($REFRESH_MS)
