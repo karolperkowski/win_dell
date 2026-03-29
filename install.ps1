@@ -51,9 +51,15 @@ $ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unatt
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-$REPO_OWNER   = 'karolperkowski'
-$REPO_NAME    = 'win_dell'
-$REPO_ZIP_URL = "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/$Branch.zip"
+$REPO_OWNER    = 'karolperkowski'
+$REPO_NAME     = 'win_dell'
+$MANIFEST_URL  = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/manifest.json"
+$SIG_URL       = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/manifest.sig"
+
+# HMAC-SHA256 signing key — must match the MANIFEST_SIGNING_KEY GitHub secret.
+# This is the only value that must be manually kept in sync if you rotate the key.
+# To generate a new key: -join ((1..40) | % { [char](Get-Random -Min 33 -Max 127) })
+$MANIFEST_SIGNING_KEY = '@MM_}+tx9@=>Iopjv^]U;PiBYTUd5!8Fh{I[*jmA'
 $REPO_DIR     = Join-Path $InstallRoot 'repo'
 $TEMP_SCRIPT  = Join-Path $env:TEMP 'windeploy_install.ps1'
 
@@ -66,6 +72,60 @@ function Write-InstallLog {
     $ts = Get-Date -Format 'HH:mm:ss'
     $colour = if ($colours.ContainsKey($Level)) { $colours[$Level] } else { 'White' }
     Write-Host "[$ts][$Level] $Message" -ForegroundColor $colour
+}
+
+# ---------------------------------------------------------------------------
+# Manifest verification
+# ---------------------------------------------------------------------------
+function Get-VerifiedManifest {
+    <#
+    Fetches manifest.json and manifest.sig from the repo, verifies the HMAC
+    signature, and returns the manifest as a hashtable.
+    Throws if the signature is invalid or the fetch fails.
+    #>
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    Write-InstallLog 'Fetching manifest...' INFO
+    try {
+        $manifestJson = (Invoke-WebRequest -Uri $MANIFEST_URL -UseBasicParsing -ErrorAction Stop).Content
+        $remoteSig    = (Invoke-WebRequest -Uri $SIG_URL      -UseBasicParsing -ErrorAction Stop).Content.Trim()
+    } catch {
+        throw "Failed to fetch manifest from GitHub: $($_.Exception.Message)"
+    }
+
+    # Verify HMAC-SHA256 signature
+    $keyBytes  = [System.Text.Encoding]::UTF8.GetBytes($MANIFEST_SIGNING_KEY)
+    $msgBytes  = [System.Text.Encoding]::UTF8.GetBytes($manifestJson)
+    $hmac      = [System.Security.Cryptography.HMACSHA256]::new($keyBytes)
+    $computed  = ($hmac.ComputeHash($msgBytes) | ForEach-Object { $_.ToString('x2') }) -join ''
+    $hmac.Dispose()
+
+    if ($computed -ne $remoteSig) {
+        throw "Manifest signature INVALID. Expected: $computed  Got: $remoteSig`n" +
+              "The manifest may have been tampered with or the signing key is out of sync."
+    }
+
+    Write-InstallLog 'Manifest signature verified.' OK
+
+    # Parse and return
+    $obj = $manifestJson | ConvertFrom-Json
+    return @{
+        CommitSha  = $obj.commit_sha
+        ZipUrl     = $obj.zip_url
+        ZipSha256  = $obj.zip_sha256
+        ZipSha256  = $obj.zip_sha256
+        GeneratedAt= $obj.generated_at
+    }
+}
+
+function Test-ZipHash {
+    param([string]$ZipPath, [string]$ExpectedHash)
+    $actual = (Get-FileHash -Path $ZipPath -Algorithm SHA256).Hash.ToLower()
+    if ($actual -ne $ExpectedHash.ToLower()) {
+        throw "ZIP hash mismatch!`n  Expected : $ExpectedHash`n  Actual   : $actual`n" +
+              "The download may be corrupt or tampered with. Aborting."
+    }
+    Write-InstallLog "ZIP hash verified: $actual" OK
 }
 
 # ---------------------------------------------------------------------------
@@ -112,9 +172,18 @@ if (-not (Test-AdminPrivilege)) {
 Write-InstallLog 'Running as Administrator.' OK
 
 # ---------------------------------------------------------------------------
-# Step 2: Enforce TLS 1.2 for all web requests (required for GitHub)
+# Step 2: Fetch and verify manifest
 # ---------------------------------------------------------------------------
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$manifest = Get-VerifiedManifest
+Write-InstallLog "Manifest commit : $($manifest.CommitSha)" INFO
+Write-InstallLog "Manifest ZIP SHA: $($manifest.ZipSha256)" INFO
+Write-InstallLog "Manifest built  : $($manifest.GeneratedAt)" INFO
+
+# Use the ZIP URL and hash from the verified manifest
+$REPO_ZIP_URL      = $manifest.ZipUrl
+$EXPECTED_ZIP_HASH = $manifest.ZipSha256
 
 # ---------------------------------------------------------------------------
 # Step 3: Create install root
@@ -130,7 +199,11 @@ foreach ($dir in @($InstallRoot, $REPO_DIR)) {
 # Step 4: Download and extract the repo ZIP
 # ---------------------------------------------------------------------------
 function Install-RepoFromGitHub {
-    param([string]$ZipUrl, [string]$DestDir)
+    param(
+        [string]$ZipUrl,
+        [string]$DestDir,
+        [string]$ExpectedHash = ''   # empty = skip hash check (should only happen in dev)
+    )
 
     $zipPath = Join-Path $env:TEMP "${REPO_NAME}_${Branch}.zip"
 
@@ -141,6 +214,13 @@ function Install-RepoFromGitHub {
     } catch {
         throw "GitHub download failed: $($_.Exception.Message). " +
               "Check network connectivity and that the branch '$Branch' exists."
+    }
+
+    # Verify integrity before extracting
+    if ($ExpectedHash) {
+        Test-ZipHash -ZipPath $zipPath -ExpectedHash $ExpectedHash
+    } else {
+        Write-InstallLog 'WARNING: No expected hash provided - skipping ZIP integrity check.' WARN
     }
 
     Write-InstallLog "Extracting to: $DestDir"
@@ -211,7 +291,7 @@ if ($Update) {
     # Download fresh repo ZIP into a temp location, then swap only the
     # script files — preserve state.json, logs, and installer binaries.
     $tempRepo = Join-Path $env:TEMP 'windeploy_update'
-    Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $tempRepo
+    Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $tempRepo -ExpectedHash $EXPECTED_ZIP_HASH
 
     # Overwrite scripts — explicit list so we never accidentally clobber
     # state, logs, or user-dropped installers in /apps
@@ -256,7 +336,7 @@ if ($repoExists) {
     Remove-Item $REPO_DIR -Recurse -Force
 }
 
-Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $REPO_DIR
+Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $REPO_DIR -ExpectedHash $EXPECTED_ZIP_HASH
 
 # ---------------------------------------------------------------------------
 # Step 5: Verify the repo looks sane before handing off
