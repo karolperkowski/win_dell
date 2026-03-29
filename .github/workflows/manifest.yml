@@ -1,0 +1,93 @@
+name: Generate release manifest
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to commit manifest.json back to the repo
+
+jobs:
+  manifest:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate manifest.json
+        shell: pwsh
+        env:
+          MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # ── Resolve commit SHA ──
+          $commitSha = (git rev-parse HEAD).Trim()
+          Write-Host "Commit SHA: $commitSha"
+
+          # ── Download the branch ZIP and compute its hash ──
+          # We download exactly the same URL that install.ps1 uses so the
+          # hash is always for what clients will actually receive.
+          $zipUrl  = "https://github.com/${{ github.repository }}/archive/refs/heads/main.zip"
+          $zipPath = Join-Path $env:TEMP 'release.zip'
+
+          Write-Host "Downloading ZIP: $zipUrl"
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+
+          $zipHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+          Write-Host "ZIP SHA-256: $zipHash"
+
+          Remove-Item $zipPath -Force
+
+          # ── Build manifest body ──
+          $manifest = [ordered]@{
+            schema_version = 1
+            repository     = '${{ github.repository }}'
+            branch         = 'main'
+            commit_sha     = $commitSha
+            zip_url        = $zipUrl
+            zip_sha256     = $zipHash
+            generated_at   = (Get-Date -Format 'o')
+          }
+          $manifestJson = $manifest | ConvertTo-Json -Depth 3
+
+          # ── Sign with HMAC-SHA256 ──
+          # The signing key comes from a GitHub secret so it never appears
+          # in logs or the repo. install.ps1 embeds the same key to verify.
+          if (-not $env:MANIFEST_SIGNING_KEY) {
+            throw 'MANIFEST_SIGNING_KEY secret is not set. Go to repo Settings → Secrets → Actions and add it.'
+          }
+
+          $keyBytes  = [System.Text.Encoding]::UTF8.GetBytes($env:MANIFEST_SIGNING_KEY)
+          $msgBytes  = [System.Text.Encoding]::UTF8.GetBytes($manifestJson)
+          $hmac      = [System.Security.Cryptography.HMACSHA256]::new($keyBytes)
+          $sigBytes  = $hmac.ComputeHash($msgBytes)
+          $signature = ($sigBytes | ForEach-Object { $_.ToString('x2') }) -join ''
+          $hmac.Dispose()
+
+          Write-Host "Signature: $signature"
+
+          # ── Write files ──
+          $manifestJson | Set-Content -Path 'manifest.json' -Encoding UTF8
+          $signature    | Set-Content -Path 'manifest.sig'  -Encoding UTF8
+
+          Write-Host 'manifest.json and manifest.sig written.'
+
+      - name: Commit manifest back to repo
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Only commit if the manifest actually changed
+          if git diff --quiet manifest.json manifest.sig; then
+            echo "Manifest unchanged - nothing to commit."
+          else
+            git add manifest.json manifest.sig
+            git commit -m "chore: update manifest for $(git rev-parse --short HEAD~1)"
+            git push
+          fi
