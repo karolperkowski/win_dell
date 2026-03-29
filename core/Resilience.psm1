@@ -126,11 +126,14 @@ function Assert-ScheduledTasks {
         return
     }
 
+    $LOG_DIR = 'C:\ProgramData\WinDeploy\Logs'
+
     $taskDefs = @(
         @{
             Name        = $Script:TASK_RESUME
             Script      = Join-Path $RepoRoot 'core\Orchestrator.ps1'
             Args        = '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass'
+            LogFile     = "$LOG_DIR\task_resume.log"
             Principal   = 'SYSTEM'
             Triggers    = @('Boot', 'Logon')
             TimeLimit   = 4
@@ -140,6 +143,7 @@ function Assert-ScheduledTasks {
             Name        = $Script:TASK_MONITOR
             Script      = Join-Path $RepoRoot 'core\Monitor.ps1'
             Args        = '-WindowStyle Normal -ExecutionPolicy Bypass'
+            LogFile     = "$LOG_DIR\task_monitor.log"
             Principal   = 'Users'
             Triggers    = @('Logon')
             TimeLimit   = 4
@@ -149,6 +153,7 @@ function Assert-ScheduledTasks {
             Name        = $Script:TASK_NOTIFY
             Script      = Join-Path $RepoRoot 'core\Notify.ps1'
             Args        = '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass'
+            LogFile     = "$LOG_DIR\task_notify.log"
             Principal   = 'Users'
             Triggers    = @('Logon')
             TimeLimit   = 0.033   # 2 minutes
@@ -163,11 +168,12 @@ function Assert-ScheduledTasks {
             continue
         }
 
-        # Check if already registered with the correct script path
+        # Check if already registered with a launcher for this task
         $existing = Get-ScheduledTask -TaskName $def.Name -ErrorAction SilentlyContinue
         if ($existing) {
             $currentArgs = $existing.Actions[0].Arguments
-            if ($currentArgs -like "*$($def.Script)*") {
+            $launcherName = "launch_$($def.Name.Replace('WinDeploy-','').ToLower()).ps1"
+            if ($currentArgs -like "*$launcherName*") {
                 Write-ResilienceLog "Task '$($def.Name)' OK." OK
                 continue
             }
@@ -178,7 +184,28 @@ function Assert-ScheduledTasks {
         }
 
         try {
-            $argString = "$($def.Args) -File `"$($def.Script)`""
+            # Wrap in a launcher script that captures all output to a log file.
+            # This ensures every task execution leaves a trace even before the
+            # script's own logging initialises.
+            $launcherPath = Join-Path $LOG_DIR "launch_$($def.Name.Replace('WinDeploy-','').ToLower()).ps1"
+            $logFile = $def.LogFile
+            $scriptPath = $def.Script
+            $innerArgs = $def.Args
+
+            $launcherContent = @"
+`$log = '$logFile'
+`$ts  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+Add-Content `$log "[`$ts] Task '$($def.Name)' launcher started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)" -Encoding UTF8
+try {
+    & powershell.exe $innerArgs -File '$scriptPath' *>> `$log
+    Add-Content `$log "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Exited: `$LASTEXITCODE" -Encoding UTF8
+} catch {
+    Add-Content `$log "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] LAUNCHER ERROR: `$(`$_.Exception.Message)" -Encoding UTF8
+}
+"@
+            $launcherContent | Set-Content -Path $launcherPath -Encoding UTF8
+
+            $argString = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
             $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
 
             $triggers = @()
