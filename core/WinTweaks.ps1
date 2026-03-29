@@ -157,6 +157,49 @@ function Set-VerboseLogin {
     }
 }
 
+function Set-DisplayScale {
+    <#
+    Sets display scaling to 100% (96 DPI) for the current user and the
+    default user hive so it applies to any new user profile created later.
+
+    Windows DPI values:
+      96  = 100%  |  120 = 125%  |  144 = 150%  |  192 = 200%
+
+    Change takes effect after the next logoff/reboot, which the deployment
+    already performs after WinTweaks completes.
+    #>
+    Write-LogSection 'Display scaling -> 100%'
+
+    # Current user
+    Set-Reg 'HKCU:\Control Panel\Desktop' 'LogPixels'      96 DWord
+    Set-Reg 'HKCU:\Control Panel\Desktop' 'Win8DpiScaling'  1 DWord
+
+    # Clear any per-monitor DPI overrides stored by Windows 11
+    $perMonitorKey = 'HKCU:\Control Panel\Desktop\PerMonitorSettings'
+    if (Test-Path $perMonitorKey) {
+        Get-ChildItem $perMonitorKey -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-ItemProperty -Path $_.PSPath -Name 'DpiValue' -ErrorAction SilentlyContinue
+        }
+        Write-LogInfo '  Cleared per-monitor DPI overrides.'
+    }
+
+    # Default user hive — applies to any new user profile created after deployment
+    $defaultHive = 'C:\Users\Default\NTUSER.DAT'
+    if (Test-Path $defaultHive) {
+        try {
+            & reg.exe load 'HKU\WinDeploy_DPI' $defaultHive 2>$null
+            Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'LogPixels'       96 DWord
+            Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'Win8DpiScaling'   1 DWord
+            Write-LogInfo '  Default user hive updated.'
+        } finally {
+            [gc]::Collect()
+            & reg.exe unload 'HKU\WinDeploy_DPI' 2>$null
+        }
+    }
+
+    Write-LogInfo '  Display scale set to 100% (96 DPI). Takes effect after reboot.'
+}
+
 function Install-WingetApps {
     Write-LogSection 'Winget app installs'
 
@@ -269,6 +312,7 @@ try {
     Remove-BingSearch
     Set-NumLockOn
     Set-VerboseLogin
+    Set-DisplayScale
     Set-AdditionalTweaks
 
     # Winget app installs
