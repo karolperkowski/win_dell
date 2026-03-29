@@ -300,8 +300,14 @@ foreach ($p in $procs) {
             -Execute 'powershell.exe' `
             -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watchdogPath`""
 
-        # Run every 30 minutes
-        $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 30) -Once -At (Get-Date)
+        # -RepetitionInterval alone on a -Once trigger generates XML missing EndBoundary,
+        # which fails validation on Windows 10/11. -RepetitionDuration must be set explicitly.
+        # 9999 days = effectively indefinite without hitting the XML schema boundary issue.
+        $trigger = New-ScheduledTaskTrigger `
+            -Once `
+            -At (Get-Date) `
+            -RepetitionInterval (New-TimeSpan -Minutes 30) `
+            -RepetitionDuration (New-TimeSpan -Days 9999)
 
         $principal = New-ScheduledTaskPrincipal `
             -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest

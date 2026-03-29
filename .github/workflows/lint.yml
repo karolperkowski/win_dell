@@ -1,0 +1,121 @@
+name: Lint and validate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: PSScriptAnalyzer + custom checks
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
+          Write-Host "PSScriptAnalyzer $($(Get-Module -ListAvailable PSScriptAnalyzer).Version) installed."
+
+      - name: Run lint checks
+        shell: pwsh
+        run: |
+          $result = & powershell.exe -ExecutionPolicy Bypass -File lint.ps1 -Strict
+          exit $LASTEXITCODE
+
+      - name: Upload lint report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-violations
+          path: |
+            lint.ps1
+          retention-days: 7
+
+  validate-tasks:
+    name: Validate scheduled task XML
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate task XML can be registered
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+
+          # Import Resilience module and attempt to register each task
+          # against a mock path to validate the XML schema
+          Import-Module .\core\Resilience.psm1 -Force -DisableNameChecking
+
+          # Test task definitions by building them without registering
+          $testScript = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+
+          $taskDefs = @(
+              @{ Name='Test-Resume';   Triggers=@('Boot','Logon'); Principal='SYSTEM' }
+              @{ Name='Test-Monitor';  Triggers=@('Logon');        Principal='Users'  }
+              @{ Name='Test-Notify';   Triggers=@('Logon');        Principal='Users'  }
+              @{ Name='Test-Safety';   OneShot=$true;              Principal='SYSTEM' }
+              @{ Name='Test-Watchdog'; Repeating=$true;            Principal='SYSTEM' }
+          )
+
+          foreach ($def in $taskDefs) {
+              try {
+                  if ($def.OneShot) {
+                      $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(6)
+                  } elseif ($def.Repeating) {
+                      $trigger = New-ScheduledTaskTrigger `
+                          -Once -At (Get-Date) `
+                          -RepetitionInterval (New-TimeSpan -Minutes 30) `
+                          -RepetitionDuration (New-TimeSpan -Days 9999)
+                  } else {
+                      $triggers = @()
+                      foreach ($t in $def.Triggers) {
+                          $triggers += switch ($t) {
+                              'Boot'  { New-ScheduledTaskTrigger -AtStartup }
+                              'Logon' { New-ScheduledTaskTrigger -AtLogOn }
+                          }
+                      }
+                      $trigger = $triggers
+                  }
+
+                  $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+                      -Argument "-File `"$testScript`""
+
+                  $principal = if ($def.Principal -eq 'SYSTEM') {
+                      New-ScheduledTaskPrincipal -UserId 'SYSTEM' `
+                          -LogonType ServiceAccount -RunLevel Highest
+                  } else {
+                      New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -RunLevel Limited
+                  }
+
+                  $settings = New-ScheduledTaskSettingsSet `
+                      -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+                      -MultipleInstances IgnoreNew `
+                      -StartWhenAvailable
+
+                  # Register to temp name, validate, then remove
+                  $tempName = "WinDeployCI-$($def.Name)-$(Get-Random)"
+                  Register-ScheduledTask -TaskName $tempName `
+                      -Action $action -Trigger $trigger `
+                      -Principal $principal -Settings $settings `
+                      -Force | Out-Null
+
+                  Unregister-ScheduledTask -TaskName $tempName -Confirm:$false
+                  Write-Host "[OK] Task schema valid: $($def.Name)" -ForegroundColor Green
+
+              } catch {
+                  Write-Host "[FAIL] Task schema invalid: $($def.Name) - $($_.Exception.Message)" -ForegroundColor Red
+                  $failed = $true
+              }
+          }
+
+          if ($failed) { exit 1 }
+          Write-Host "`nAll task schemas validated." -ForegroundColor Green
