@@ -241,10 +241,11 @@ if ($killed) { Start-Sleep -Seconds 2 }
 Write-UninstallLog '--- Auto-logon ---'
 
 try {
-    Set-ItemProperty $AUTOLOGON_REG 'AutoAdminLogon'  '0'  -Type String -ErrorAction SilentlyContinue
+    Set-ItemProperty  $AUTOLOGON_REG 'AutoAdminLogon'  '0' -Type String -ErrorAction SilentlyContinue
+    Set-ItemProperty  $AUTOLOGON_REG 'AutoLogonCount'  '0' -Type String -ErrorAction SilentlyContinue
     Remove-ItemProperty $AUTOLOGON_REG 'DefaultPassword' -ErrorAction SilentlyContinue
-    Set-ItemProperty $AUTOLOGON_REG 'AutoLogonCount'  '0'  -Type String -ErrorAction SilentlyContinue
-    Write-UninstallLog '  Auto-logon disabled and password removed.' OK
+    Remove-ItemProperty $AUTOLOGON_REG 'DefaultUserName' -ErrorAction SilentlyContinue
+    Write-UninstallLog '  Auto-logon disabled, credentials removed.' OK
 } catch {
     Write-UninstallLog "  Auto-logon cleanup failed: $($_.Exception.Message)" WARN
 }
@@ -270,74 +271,73 @@ if (Test-Path $watchdog) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 5: Remove state file
+# Step 5: Remove all WinDeploy files
 # ---------------------------------------------------------------------------
-if (-not $KeepState) {
-    Write-UninstallLog '--- State file ---'
-    if (Test-Path $STATE_FILE) {
-        Remove-Item $STATE_FILE -Force -ErrorAction SilentlyContinue
-        Write-UninstallLog '  Removed: state.json' OK
-    }
-    # Also remove any quarantined state files
-    Get-ChildItem $DEPLOY_ROOT -Filter 'state.json.corrupt_*' -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
-            Write-UninstallLog "  Removed: $($_.Name)" OK
-        }
-    # Remove tailscale state files
-    foreach ($f in @('tailscale.json', 'tailscale_qr.png')) {
-        $p = Join-Path $DEPLOY_ROOT $f
-        if (Test-Path $p) {
-            Remove-Item $p -Force -ErrorAction SilentlyContinue
-            Write-UninstallLog "  Removed: $f" OK
-        }
-    }
-}
+Write-UninstallLog '--- Files ---'
 
-# ---------------------------------------------------------------------------
-# Step 6: Remove repo
-# ---------------------------------------------------------------------------
-Write-UninstallLog '--- Repo ---'
+if ($KeepLogs -or $KeepState) {
+    # Selective removal - preserve what was requested
+    if (-not $KeepState) {
+        foreach ($f in @('state.json', 'tailscale.json', 'tailscale_qr.png')) {
+            $p = Join-Path $DEPLOY_ROOT $f
+            if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue; Write-UninstallLog "  Removed: $f" OK }
+        }
+        Get-ChildItem $DEPLOY_ROOT -Filter 'state.json.corrupt_*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue; Write-UninstallLog "  Removed: $($_.Name)" OK }
+    } else {
+        Write-UninstallLog '  State file preserved (-KeepState).' SKIP
+    }
 
-$repoDir = Join-Path $DEPLOY_ROOT 'repo'
-if (Test-Path $repoDir) {
-    try {
-        Remove-Item $repoDir -Recurse -Force -ErrorAction Stop
-        Write-UninstallLog '  Removed: repo\' OK
-    } catch {
-        Write-UninstallLog "  Failed to remove repo\: $($_.Exception.Message)" ERROR
-        Write-UninstallLog '  Try rebooting and running uninstall again.' WARN
+    $repoDir = Join-Path $DEPLOY_ROOT 'repo'
+    if (Test-Path $repoDir) {
+        try   { Remove-Item $repoDir -Recurse -Force -ErrorAction Stop; Write-UninstallLog '  Removed: repo\' OK }
+        catch { Write-UninstallLog "  Failed to remove repo\: $($_.Exception.Message)" WARN }
+    }
+
+    if (-not $KeepLogs) {
+        Write-UninstallLog '  Removing Logs\...' INFO
+        Start-Sleep -Milliseconds 300
+        try   { Remove-Item $LOG_DIR -Recurse -Force -ErrorAction Stop; Write-UninstallLog '  Removed: Logs\' OK }
+        catch { Write-UninstallLog "  Could not remove Logs\: $($_.Exception.Message)" WARN }
+    } else {
+        Write-UninstallLog '  Logs preserved (-KeepLogs).' SKIP
     }
 } else {
-    Write-UninstallLog '  repo\ not found.' SKIP
-}
-
-# ---------------------------------------------------------------------------
-# Step 7: Remove logs (unless -KeepLogs)
-# ---------------------------------------------------------------------------
-if (-not $KeepLogs) {
-    Write-UninstallLog '--- Logs ---'
-
-    # Write final line before removing the directory
-    Write-UninstallLog 'Removing log directory...' WARN
-
-    # Small delay to flush the log
-    Start-Sleep -Milliseconds 200
-
-    if (Test-Path $LOG_DIR) {
+    # Full removal - nuke the entire deploy root in one shot
+    Write-UninstallLog "  Removing $DEPLOY_ROOT\ entirely..." INFO
+    Start-Sleep -Milliseconds 300
+    if (Test-Path $DEPLOY_ROOT) {
         try {
-            Remove-Item $LOG_DIR -Recurse -Force -ErrorAction Stop
+            Remove-Item $DEPLOY_ROOT -Recurse -Force -ErrorAction Stop
+            Write-UninstallLog "  Removed: $DEPLOY_ROOT\" OK
         } catch {
-            Write-Host "[Uninstall] Could not remove Logs\: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-UninstallLog "  Force remove failed: $($_.Exception.Message)" WARN
+            Write-UninstallLog '  Falling back to item-by-item deletion...' INFO
+            Get-ChildItem $DEPLOY_ROOT -Recurse -Force -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+            Remove-Item $DEPLOY_ROOT -Force -ErrorAction SilentlyContinue
         }
+    } else {
+        Write-UninstallLog "  $DEPLOY_ROOT not found - already clean." SKIP
     }
+}
 
-    # Remove root deploy dir if now empty
-    if ((Test-Path $DEPLOY_ROOT) -and -not (Get-ChildItem $DEPLOY_ROOT -ErrorAction SilentlyContinue)) {
-        Remove-Item $DEPLOY_ROOT -Force -ErrorAction SilentlyContinue
+# ---------------------------------------------------------------------------
+# Step 6: Remove temp script (created when run via irm|iex)
+# ---------------------------------------------------------------------------
+$tempScript = Join-Path $env:TEMP 'windeploy_uninstall.ps1'
+if (Test-Path $tempScript) {
+    # Can't delete ourselves while running - schedule deletion on next boot
+    try {
+        # Register a one-shot run-once entry to delete the temp file on next logon
+        $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+        $cmd = "cmd /c del /f /q `"$tempScript`""
+        Set-ItemProperty $regPath 'WinDeployCleanup' $cmd -ErrorAction SilentlyContinue
+        Write-UninstallLog '  Temp script scheduled for deletion on next logon.' OK
+    } catch {
+        Write-UninstallLog "  Could not schedule temp script cleanup: $($_.Exception.Message)" WARN
     }
-} else {
-    Write-UninstallLog 'Log directory preserved (-KeepLogs).' SKIP
 }
 
 # ---------------------------------------------------------------------------
