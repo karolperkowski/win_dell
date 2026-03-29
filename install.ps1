@@ -28,11 +28,17 @@
 
 [CmdletBinding()]
 param(
-    # Branch or tag to download. Change to a release tag for production.
+    # Branch or tag to download.
     [string]$Branch = 'main',
 
     # Override destination. Defaults to the stable deploy root.
     [string]$InstallRoot = 'C:\ProgramData\WinDeploy',
+
+    # Update mode: pull fresh scripts from GitHub without re-running bootstrap.
+    # State file and logs are preserved. Tasks are NOT re-registered.
+    # Usage: irm "https://.../install.ps1" | iex  then choose update, OR
+    #        pass -Update when re-launching the elevated temp file.
+    [switch]$Update,
 
     # Internal flag set when the script re-launches itself elevated.
     [switch]$Elevated
@@ -87,6 +93,7 @@ function Invoke-ElevatedRelaunch {
     $scriptContent | Set-Content -Path $TEMP_SCRIPT -Encoding UTF8
 
     $argList = "-ExecutionPolicy Bypass -File `"$TEMP_SCRIPT`" -Branch `"$Branch`" -InstallRoot `"$InstallRoot`" -Elevated"
+    if ($Update) { $argList += ' -Update' }
     Start-Process powershell.exe -ArgumentList $argList -Verb RunAs
     Write-InstallLog 'Elevated process launched. This window can be closed.' OK
     exit 0
@@ -165,14 +172,91 @@ function Install-RepoFromGitHub {
     Write-InstallLog "Repo extracted to: $DestDir" OK
 }
 
-# Only re-download if the repo isn't already present (supports re-runs)
+# ---------------------------------------------------------------------------
+# Step 4: Detect mode and act accordingly
+# ---------------------------------------------------------------------------
 $bootstrapPath = Join-Path $REPO_DIR 'bootstrap.ps1'
-if (Test-Path $bootstrapPath) {
-    Write-InstallLog 'Repo already present at destination - skipping download.' WARN
-    Write-InstallLog "Delete '$REPO_DIR' and re-run to force a fresh download." INFO
-} else {
-    Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $REPO_DIR
+$stateFile     = Join-Path $InstallRoot 'state.json'
+$repoExists    = Test-Path $bootstrapPath
+
+# Auto-detect update mode: if the repo already exists and the user didn't
+# pass -Update, prompt them rather than silently doing the wrong thing.
+if ($repoExists -and -not $Update -and -not $Elevated) {
+    Write-InstallLog 'Existing WinDeploy installation detected.' WARN
+    Write-InstallLog '' INFO
+    Write-InstallLog '  [F] Fresh install  — wipes repo, re-runs bootstrap  (dangerous if deployment running)' INFO
+    Write-InstallLog '  [U] Update scripts — pulls latest scripts, keeps state, skips bootstrap' INFO
+    Write-InstallLog '  [Q] Quit' INFO
+    Write-InstallLog '' INFO
+    $choice = Read-Host 'Choice (F/U/Q)'
+    switch ($choice.ToUpper().Trim()) {
+        'U' { $Update = $true }
+        'F' { $Update = $false }
+        default { Write-InstallLog 'Aborted.' WARN; exit 0 }
+    }
 }
+
+if ($Update) {
+    # ── Update mode: replace scripts only, leave state + logs untouched ──
+    Write-InstallLog 'Update mode: pulling latest scripts from GitHub...' INFO
+
+    # Back up current settings.json so custom values survive the overwrite
+    $settingsSrc  = Join-Path $REPO_DIR 'config\settings.json'
+    $settingsBak  = Join-Path $InstallRoot 'settings.json.bak'
+    if (Test-Path $settingsSrc) {
+        Copy-Item $settingsSrc $settingsBak -Force
+        Write-InstallLog "Settings backed up to: $settingsBak" INFO
+    }
+
+    # Download fresh repo ZIP into a temp location, then swap only the
+    # script files — preserve state.json, logs, and installer binaries.
+    $tempRepo = Join-Path $env:TEMP 'windeploy_update'
+    Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $tempRepo
+
+    # Overwrite scripts — explicit list so we never accidentally clobber
+    # state, logs, or user-dropped installers in /apps
+    $scriptDirs = @('core', 'config', 'data')
+    foreach ($dir in $scriptDirs) {
+        $src  = Join-Path $tempRepo $dir
+        $dest = Join-Path $REPO_DIR  $dir
+        if (Test-Path $src) {
+            if (-not (Test-Path $dest)) { New-Item -ItemType Directory $dest -Force | Out-Null }
+            Copy-Item "$src\*" $dest -Recurse -Force
+            Write-InstallLog "Updated: $dir\" OK
+        }
+    }
+    # Root-level scripts
+    foreach ($f in @('bootstrap.ps1', 'install.ps1')) {
+        $src = Join-Path $tempRepo $f
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $REPO_DIR $f) -Force
+            Write-InstallLog "Updated: $f" OK
+        }
+    }
+
+    # Restore user's settings.json over the freshly downloaded default
+    if (Test-Path $settingsBak) {
+        Copy-Item $settingsBak $settingsSrc -Force
+        Write-InstallLog 'User settings.json restored from backup.' OK
+    }
+
+    Remove-Item $tempRepo -Recurse -Force -ErrorAction SilentlyContinue
+
+    Write-InstallLog '' INFO
+    Write-InstallLog '=================================================' OK
+    Write-InstallLog '  Scripts updated. State file preserved.' OK
+    Write-InstallLog "  Repo: $REPO_DIR" OK
+    Write-InstallLog '=================================================' OK
+    exit 0
+}
+
+# ── Fresh install mode ──
+if ($repoExists) {
+    Write-InstallLog 'Removing existing repo for fresh install...' WARN
+    Remove-Item $REPO_DIR -Recurse -Force
+}
+
+Install-RepoFromGitHub -ZipUrl $REPO_ZIP_URL -DestDir $REPO_DIR
 
 # ---------------------------------------------------------------------------
 # Step 5: Verify the repo looks sane before handing off
