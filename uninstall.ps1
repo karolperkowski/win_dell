@@ -145,20 +145,48 @@ if (-not $Silent) {
 Write-UninstallLog 'Uninstall started.'
 
 # ---------------------------------------------------------------------------
-# Step 1: Remove scheduled tasks
+# Step 1: Stop and kill task processes BEFORE unregistering
 # ---------------------------------------------------------------------------
-Write-UninstallLog '--- Scheduled tasks ---'
+Write-UninstallLog '--- Stopping task processes ---'
+
+foreach ($taskName in $ALL_TASKS) {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if (-not $task) { continue }
+
+    if ($task.State -eq 'Running') {
+        Write-UninstallLog "  Task '$taskName' is running - force stopping..." WARN
+
+        # Try Stop-ScheduledTask first
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+        # Get the PID of the running task instance and kill it directly
+        $taskProc = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" |
+            Where-Object {
+                $_.CommandLine -like "*$taskName*" -or
+                $_.CommandLine -like "*Orchestrator*" -or
+                $_.CommandLine -like "*Monitor*" -or
+                $_.CommandLine -like "*Notify*" -or
+                $_.CommandLine -like "*launch_*"
+            }
+        foreach ($proc in $taskProc) {
+            Write-UninstallLog "  Force killing PID $($proc.ProcessId) for task '$taskName'" WARN
+            # taskkill /F terminates the process tree, Stop-Process only kills the process
+            & taskkill.exe /F /PID $proc.ProcessId /T 2>$null | Out-Null
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Step 2: Unregister scheduled tasks
+# ---------------------------------------------------------------------------
+Write-UninstallLog '--- Unregistering scheduled tasks ---'
 
 foreach ($taskName in $ALL_TASKS) {
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task) {
         try {
-            # If task is currently running, stop it first
-            $info = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
-            if ($task.State -eq 'Running') {
-                Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-                Write-UninstallLog "  Stopped running task: $taskName" WARN
-            }
             Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
             Write-UninstallLog "  Removed: $taskName" OK
         } catch {
@@ -170,32 +198,42 @@ foreach ($taskName in $ALL_TASKS) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 2: Kill any running WinDeploy processes
+# Step 3: Kill ANY remaining WinDeploy-related processes
 # ---------------------------------------------------------------------------
-Write-UninstallLog '--- Running processes ---'
+Write-UninstallLog '--- Killing remaining processes ---'
 
-$patterns = @('Orchestrator.ps1', 'Monitor.ps1', 'Notify.ps1', 'launch_resume', 'launch_monitor', 'launch_notify')
+$patterns   = @('Orchestrator.ps1','Monitor.ps1','Notify.ps1','Watchdog',
+                 'launch_resume','launch_monitor','launch_notify','WinDeploy')
+$killed     = $false
 
-$killed = $false
-Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | ForEach-Object {
-    $cmd = $_.CommandLine
-    foreach ($p in $patterns) {
-        if ($cmd -like "*$p*") {
-            try {
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
-                Write-UninstallLog "  Killed PID $($_.ProcessId): $($cmd.Substring(0, [Math]::Min(80, $cmd.Length)))..." OK
+# Check both powershell.exe and pwsh.exe
+foreach ($exeName in @('powershell.exe', 'pwsh.exe')) {
+    Get-CimInstance Win32_Process -Filter "Name = '$exeName'" | ForEach-Object {
+        $proc = $_
+        $cmd  = $proc.CommandLine
+        if (-not $cmd) { return }
+        foreach ($p in $patterns) {
+            if ($cmd -like "*$p*") {
+                Write-UninstallLog "  Killing PID $($proc.ProcessId) ($exeName): $($cmd.Substring(0,[Math]::Min(80,$cmd.Length)))..." WARN
+                # /T kills the entire process tree (child processes too)
+                & taskkill.exe /F /PID $proc.ProcessId /T 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    # fallback
+                    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+                }
                 $killed = $true
-            } catch {
-                Write-UninstallLog "  Could not kill PID $($_.ProcessId): $($_.Exception.Message)" WARN
+                break
             }
-            break
         }
     }
 }
 
 if (-not $killed) {
-    Write-UninstallLog '  No running WinDeploy processes found.' SKIP
+    Write-UninstallLog '  No remaining WinDeploy processes found.' SKIP
 }
+
+# Brief wait to ensure all file handles are released before we try to delete files
+if ($killed) { Start-Sleep -Seconds 2 }
 
 # ---------------------------------------------------------------------------
 # Step 3: Disable auto-logon
