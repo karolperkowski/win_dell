@@ -80,11 +80,11 @@ Add-Type -AssemblyName System.Windows.Forms
 
 # Keep display and system awake while the monitor is open.
 # ES_CONTINUOUS(0x80000000) | ES_DISPLAY_REQUIRED(0x00000002) | ES_SYSTEM_REQUIRED(0x00000001)
-# Windows automatically reverts when this process exits — no cleanup needed.
+# Must cast to [uint32] - PS 5.1 parses 0x80000000 as negative Int32 which overflows the uint param
 try {
     Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);' `
              -Name 'SleepGuard' -Namespace 'WinDeploy' -ErrorAction Stop
-    [WinDeploy.SleepGuard]::SetThreadExecutionState(0x80000003) | Out-Null
+    [WinDeploy.SleepGuard]::SetThreadExecutionState([uint32]0x80000000 -bor [uint32]0x00000002 -bor [uint32]0x00000001) | Out-Null
 } catch { [System.IO.File]::AppendAllText($Script:_rawLog, "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] SleepGuard failed: $($_.Exception.Message)" + "`r`n", [System.Text.Encoding]::UTF8) }
 
 # ---------------------------------------------------------------------------
