@@ -157,7 +157,42 @@ function Set-VerboseLogin {
     }
 }
 
-function Set-AdditionalTweaks {
+function Install-WingetApps {
+    Write-LogSection 'Winget app installs'
+
+    # Ensure winget is available
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        Write-LogWarning 'winget not found - skipping app installs.'
+        Write-LogWarning 'winget ships with App Installer from the Microsoft Store.'
+        return
+    }
+
+    $apps = @(
+        @{ Id = 'Google.Chrome'; Name = 'Google Chrome' }
+    )
+
+    foreach ($app in $apps) {
+        Write-LogInfo "Installing $($app.Name) via winget..."
+        try {
+            $result = & winget.exe install `
+                --id $app.Id `
+                --silent `
+                --accept-package-agreements `
+                --accept-source-agreements `
+                --disable-interactivity `
+                2>&1
+
+            if ($LASTEXITCODE -in @(0, -1978335189)) {
+                # 0 = success, -1978335189 (0x8A150011) = already installed
+                Write-LogSuccess "$($app.Name) installed (or already present)."
+            } else {
+                Write-LogWarning "$($app.Name) winget exit code: $LASTEXITCODE"
+            }
+        } catch {
+            Write-LogWarning "$($app.Name) install failed: $($_.Exception.Message)"
+        }
+    }
+}
     Write-LogSection 'Additional tweaks'
 
     # Disable telemetry
@@ -233,6 +268,9 @@ try {
     Set-NumLockOn
     Set-VerboseLogin
     Set-AdditionalTweaks
+
+    # Winget app installs
+    Install-WingetApps
 
     Write-LogSuccess 'WinTweaks stage complete.'
     Close-Logger -FinalStatus 'SUCCESS'
