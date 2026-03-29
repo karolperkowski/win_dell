@@ -72,19 +72,6 @@ $REFRESH_MS   = 3000
 $CLOSE_DELAY  = 30
 
 
-# Wrap everything from here in a trap so ANY unhandled crash writes to disk.
-# This fires even if WPF never loads, giving us a crash file to diagnose.
-trap {
-    $msg = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [FATAL] Monitor unhandled: $($_.Exception.Message) Line:$($_.InvocationInfo.ScriptLineNumber)"
-    try { Add-Content -Path $Script:_rawLog  -Value $msg -Encoding UTF8 } catch {}
-    try { Add-Content -Path $Script:_crashLog -Value $msg -Encoding UTF8 } catch {}
-    # Write a plain-text crash file that notepad can open - visible even without WPF
-    try {
-        $plain = "WinDeploy Monitor Crash`r`n`r`n$($_.Exception.Message)`r`n`r`nLine: $($_.InvocationInfo.ScriptLineNumber)`r`nLog: $Script:_crashLog"
-        [System.IO.File]::WriteAllText('C:\ProgramData\WinDeploy\Logs\monitor_crash.txt', $plain)
-    } catch {}
-    continue
-}
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
@@ -231,8 +218,26 @@ try {
 </Window>
 '@
 
-$reader = [System.Xml.XmlNodeReader]::new($XAML)
-$Window = [Windows.Markup.XamlReader]::Load($reader)
+try {
+    $reader = [System.Xml.XmlNodeReader]::new($XAML)
+    $Window = [Windows.Markup.XamlReader]::Load($reader)
+} catch {
+    $msg = "FATAL: XamlReader.Load failed - $($_.Exception.Message)"
+    Write-Early $msg
+    try { Add-Content -Path $Script:_crashLog -Value $msg -Encoding UTF8 } catch {}
+    try {
+        [System.IO.File]::WriteAllText(
+            'C:\ProgramData\WinDeploy\Logs\monitor_crash.txt',
+            "WinDeploy Monitor - XAML Load Failed`r`n`r`n$($_.Exception.Message)`r`n`r`nCheck: $Script:_rawLog"
+        )
+    } catch {}
+    # Show a plain Windows message box - no WPF needed
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show(
+        "WinDeploy Monitor failed to start:`n`n$($_.Exception.Message)`n`nCheck: C:\ProgramData\WinDeploy\Logs\early.log",
+        'WinDeploy Monitor', 'OK', 'Error') | Out-Null
+    exit 1
+}
 
 $TitleLabel           = $Window.FindName('TitleLabel')
 $SubtitleLabel        = $Window.FindName('SubtitleLabel')
