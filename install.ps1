@@ -255,25 +255,10 @@ function Install-RepoFromGitHub {
 # Step 4: Detect mode and act accordingly
 # ---------------------------------------------------------------------------
 $bootstrapPath = Join-Path $REPO_DIR 'bootstrap.ps1'
-$stateFile     = Join-Path $InstallRoot 'state.json'
 $repoExists    = Test-Path $bootstrapPath
 
-# Auto-detect update mode: if the repo already exists and the user didn't
-# pass -Update, prompt them rather than silently doing the wrong thing.
-if ($repoExists -and -not $Update -and -not $Elevated) {
-    Write-InstallLog 'Existing WinDeploy installation detected.' WARN
-    Write-InstallLog '' INFO
-    Write-InstallLog '  [F] Fresh install  — wipes repo, re-runs bootstrap  (dangerous if deployment running)' INFO
-    Write-InstallLog '  [U] Update scripts — pulls latest scripts, keeps state, skips bootstrap' INFO
-    Write-InstallLog '  [Q] Quit' INFO
-    Write-InstallLog '' INFO
-    $choice = Read-Host 'Choice (F/U/Q)'
-    switch ($choice.ToUpper().Trim()) {
-        'U' { $Update = $true }
-        'F' { $Update = $false }
-        default { Write-InstallLog 'Aborted.' WARN; exit 0 }
-    }
-}
+# Always update if repo exists, fresh install if not - no prompt.
+if ($repoExists) { $Update = $true }
 
 if ($Update) {
     # ── Update mode: replace scripts only, leave state + logs untouched ──
