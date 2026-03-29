@@ -54,21 +54,16 @@ win_dell/
 
 ---
 
-## One-liner syntax
-
-`irm URL | iex` pipes a string to `Invoke-Expression`. `iex` has no parameters
-to pass through, so `-Update` (or any flag) cannot be appended to `iex`.
-
-Always use the scriptblock form in docs and examples:
+## One-liner
 
 ```powershell
-# Correct — parameters work
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1")))
-& ([scriptblock]::Create((irm "https://..."))) -Update
-
-# Wrong — iex takes no params, this throws
-irm "https://..." | iex -Update
+irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1" | iex
 ```
+
+Re-running on an existing install automatically updates scripts and preserves state.
+No parameters, no flags, no prompts. `irm | iex` works because install.ps1 needs
+no arguments — the update-vs-fresh decision is made internally based on whether
+the repo already exists on disk.
 
 ---
 

@@ -9,33 +9,13 @@ PowerShell. Manual trigger once; everything after that is automatic.
 
 ## Quickstart — one-liner
 
-**Fresh install** — open PowerShell as Administrator on a fresh Windows install:
+Open PowerShell as Administrator on a fresh Windows install and run:
 
 ```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1")))
+irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1" | iex
 ```
 
-**Update scripts on an existing install** — pulls latest scripts, preserves state and logs:
-
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1"))) -Update
-```
-
-> **Why not `irm ... | iex -Update`?** `iex` (`Invoke-Expression`) is a cmdlet that takes a string — it has no `-Update` parameter to pass through. Wrapping in `[scriptblock]::Create()` turns the downloaded text into a real scriptblock so parameters work normally.
-
-The script will:
-1. Re-launch itself elevated if not already admin
-2. Fetch and verify `manifest.json` (HMAC-SHA256 signature check)
-3. Download the repo ZIP and verify its SHA-256 hash
-4. Run `bootstrap.ps1`, which registers the resume-after-reboot tasks
-5. Hand off to the orchestrator — walk away
-
-> **Tip:** Pin to a specific release tag for production:
-> ```powershell
-> & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/v1.0.0/install.ps1")))
-> ```
-
----
+That's it. Re-running the same command on an existing install will update the scripts and preserve your state and logs. No flags, no prompts.
 
 ## Architecture Decision: Why Scheduled Task?
 
