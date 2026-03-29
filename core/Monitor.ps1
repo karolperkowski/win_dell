@@ -296,9 +296,10 @@ function Format-Elapsed ($Iso) {
 
 function Get-StageStatus ($State, $Name) {
     if (-not $State) { return 'waiting' }
-    if (@($State.CompletedStages) -contains $Name) { return 'complete' }
-    if (@($State.FailedStages)    -contains $Name) { return 'failed' }
-    if ($State.CurrentStage -eq $Name -and -not $State.DeployComplete) { return 'running' }
+    if (@(Get-StateProp $State 'CompletedStages' @()) -contains $Name) { return 'complete' }
+    if (@(Get-StateProp $State 'FailedStages'    @()) -contains $Name) { return 'failed' }
+    if ((Get-StateProp $State 'CurrentStage' '') -eq $Name -and
+        -not (Get-StateProp $State 'DeployComplete' $false))            { return 'running' }
     return 'waiting'
 }
 

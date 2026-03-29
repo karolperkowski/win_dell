@@ -281,38 +281,43 @@ function Invoke-StatePropertyCheck {
         return
     }
 
-    $stateContent     = Get-Content $statePsm1    -Raw
-    $bootstrapContent = Get-Content $bootstrapPs1 -Raw
-    $monitorContent   = Get-Content $monitorPs1   -Raw
-    $monitorLines     = Get-Content $monitorPs1
+    # (removed - now uses line-by-line reads below)
+    # (removed - now uses line-by-line reads below)
+    # (removed - now uses line-by-line reads below)
+    # (removed - now uses line-by-line reads below)
 
     # --- Extract the canonical schema from State.psm1 ---
     # Keys are defined as string literals in hashtable assignments:
     # $state['KeyName'] = ... or $initialState = [ordered]@{ KeyName = ... }
+    # --- Extract the canonical schema from State.psm1 (line-by-line, not -Raw) ---
+    $stateLines   = Get-Content $statePsm1
+    $monitorLines = Get-Content $monitorPs1
     $schemaKeys = [System.Collections.Generic.HashSet[string]]::new()
-    $stateContent | Select-String -Pattern '\\\$state\[''([A-Za-z][A-Za-z0-9]+)''\]' -AllMatches |
-        ForEach-Object { $_.Matches } | ForEach-Object { $null = $schemaKeys.Add($_.Groups[1].Value) }
-    $stateContent | Select-String -Pattern "^\s{8}([A-Z][A-Za-z0-9]+)\s+=" -AllMatches |
-        ForEach-Object { $_.Matches } | ForEach-Object { $null = $schemaKeys.Add($_.Groups[1].Value) }
+    foreach ($ln in $stateLines) {
+        # Match $state['KeyName'] = ...
+        if ($ln -match "\$state\['([A-Za-z][A-Za-z0-9]+)'\]") { $null = $schemaKeys.Add($Matches[1]) }
+        # Match indented PascalCase key assignments in the schema template
+        if ($ln -match '^\s{6,12}([A-Z][a-zA-Z0-9]+)\s*=\s') { $null = $schemaKeys.Add($Matches[1]) }
+    }
 
     # --- Extract keys bootstrap.ps1 writes in the initial state ---
     $bootKeys = [System.Collections.Generic.HashSet[string]]::new()
-    # Match lines inside the initialState hashtable block
     $inBlock = $false
-    foreach ($line in (Get-Content $bootstrapPs1)) {
-        if ($line -match 'initialState\s*=\s*\[ordered\]@\{') { $inBlock = $true; continue }
+    foreach ($ln in (Get-Content $bootstrapPs1)) {
+        if ($ln -match 'initialState\s*=\s*\[ordered\]@\{') { $inBlock = $true; continue }
         if ($inBlock) {
-            if ($line -match '^\s*\}') { $inBlock = $false; continue }
-            if ($line -match "^\s+([A-Z][A-Za-z0-9]+)\s*=") {
-                $null = $bootKeys.Add($Matches[1])
-            }
+            if ($ln -match '^\s*\}') { $inBlock = $false; continue }
+            if ($ln -match '^\s+([A-Z][A-Za-z0-9]+)\s*=') { $null = $bootKeys.Add($Matches[1]) }
         }
     }
 
-    # --- Extract keys Monitor.ps1 reads via Get-StateProp ---
+    # --- Extract keys Monitor.ps1 reads via Get-StateProp (line-by-line) ---
     $monitorKeys = [System.Collections.Generic.HashSet[string]]::new()
-    $monitorContent | Select-String -Pattern 'Get-StateProp\s+\$state\s+''([A-Za-z][A-Za-z0-9]+)''' -AllMatches |
-        ForEach-Object { $_.Matches } | ForEach-Object { $null = $monitorKeys.Add($_.Groups[1].Value) }
+    foreach ($ln in $monitorLines) {
+        if ($ln -match "Get-StateProp\s+\S+\s+'([A-Za-z][A-Za-z0-9]+)'") {
+            $null = $monitorKeys.Add($Matches[1])
+        }
+    }
 
     # --- Rule A: Monitor reads a key not in the schema ---
     foreach ($key in $monitorKeys) {
@@ -343,8 +348,10 @@ function Invoke-StatePropertyCheck {
     for ($i = 0; $i -lt $monitorLines.Count; $i++) {
         $line = $monitorLines[$i]
         if ($line.TrimStart().StartsWith('#')) { continue }
-        # Match $state.PropertyName but not $state[ which is hashtable access
-        if ($line -match '\$state\.([A-Za-z][A-Za-z0-9]+)' -and $line -notmatch '\$state\[') {
+        # Match $state.PropertyName but not $state[ (hashtable access) or $State.PSObject (PS intrinsic)
+        if ($line -match '\$state\.([A-Za-z][A-Za-z0-9]+)' -and
+            $line -notmatch '\$state\[' -and
+            $Matches[1] -ne 'PSObject') {
             Add-Violation -File $monitorPs1 -Line ($i + 1) `
                 -Rule 'State-DirectAccess' `
                 -Message ('Direct $state.' + $Matches[1] + ' in Monitor - use Get-StateProp $state ''' + $Matches[1] + ''' <default> instead.')
