@@ -9,21 +9,30 @@ PowerShell. Manual trigger once; everything after that is automatic.
 
 ## Quickstart — one-liner
 
-Open PowerShell **as Administrator** on a fresh Windows install and run:
+**Fresh install** — open PowerShell as Administrator on a fresh Windows install:
 
 ```powershell
-irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1" | iex
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1")))
 ```
 
-That's it. The script will:
-1. Re-launch itself elevated if not already admin
-2. Download the full repo from GitHub (no git required)
-3. Run `bootstrap.ps1`, which registers the resume-after-reboot task
-4. Hand off to the orchestrator — walk away
+**Update scripts on an existing install** — pulls latest scripts, preserves state and logs:
 
-> **Tip:** To pin to a specific release instead of `main`:
+```powershell
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1"))) -Update
+```
+
+> **Why not `irm ... | iex -Update`?** `iex` (`Invoke-Expression`) is a cmdlet that takes a string — it has no `-Update` parameter to pass through. Wrapping in `[scriptblock]::Create()` turns the downloaded text into a real scriptblock so parameters work normally.
+
+The script will:
+1. Re-launch itself elevated if not already admin
+2. Fetch and verify `manifest.json` (HMAC-SHA256 signature check)
+3. Download the repo ZIP and verify its SHA-256 hash
+4. Run `bootstrap.ps1`, which registers the resume-after-reboot tasks
+5. Hand off to the orchestrator — walk away
+
+> **Tip:** Pin to a specific release tag for production:
 > ```powershell
-> irm "https://raw.githubusercontent.com/karolperkowski/win_dell/v1.0.0/install.ps1" | iex
+> & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/v1.0.0/install.ps1")))
 > ```
 
 ---

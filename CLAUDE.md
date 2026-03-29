@@ -54,6 +54,24 @@ win_dell/
 
 ---
 
+## One-liner syntax
+
+`irm URL | iex` pipes a string to `Invoke-Expression`. `iex` has no parameters
+to pass through, so `-Update` (or any flag) cannot be appended to `iex`.
+
+Always use the scriptblock form in docs and examples:
+
+```powershell
+# Correct — parameters work
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/install.ps1")))
+& ([scriptblock]::Create((irm "https://..."))) -Update
+
+# Wrong — iex takes no params, this throws
+irm "https://..." | iex -Update
+```
+
+---
+
 ## PowerShell 5.1 rules — enforce these on every change
 
 These are the most common mistakes when writing code that targets PS 5.1:
