@@ -82,3 +82,5 @@ $WD = [PSCustomObject]@{
 }
 
 Export-ModuleMember -Variable WD
+# Ensure $WD is referenced after assignment so static analysis tools don't flag it as unused
+$null = $WD

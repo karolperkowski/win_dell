@@ -49,7 +49,7 @@ function Write-ResilienceLog {
             New-Item -ItemType Directory -Path $Script:LOG_DIR -Force | Out-Null
         }
         Add-Content -Path $Script:EARLY_LOG -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
-    } catch {}
+    } catch { Write-Host "[Resilience] Log write failed: $($_.Exception.Message)" }
 
     # Then console
     $colour = switch ($Level) {
@@ -197,7 +197,6 @@ function Assert-ScheduledTasks {
                 New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -LogonType Interactive -RunLevel Limited
             }
 
-            $limitHours = [int]([Math]::Ceiling($def.TimeLimit))
             $limitMins  = [int](($def.TimeLimit - [Math]::Floor($def.TimeLimit)) * 60)
             $timeLimit  = New-TimeSpan -Hours ([Math]::Floor($def.TimeLimit)) -Minutes $limitMins
 

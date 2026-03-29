@@ -60,7 +60,7 @@ function Expand-ConsoleWindow {
         if ($hwnd -ne [IntPtr]::Zero) {
             [WinDeploy.WinHelper]::ShowWindow($hwnd, 3) | Out-Null  # SW_MAXIMIZE = 3
         }
-    } catch { <# non-fatal - carry on if console handle unavailable #> }
+    } catch { Write-Host "[Install] Window maximize failed (non-fatal): $($_.Exception.Message)" }
 }
 
 Expand-ConsoleWindow

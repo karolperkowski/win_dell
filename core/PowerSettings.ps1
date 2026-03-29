@@ -27,8 +27,6 @@ Initialize-Logger -Stage $StageName
 # ---------------------------------------------------------------------------
 # GUIDs: these are Windows-standard and stable across Win10/11
 # ---------------------------------------------------------------------------
-$SCHEME_BALANCED    = 'SCHEME_BALANCED'    # Balanced (default)
-$SCHEME_CURRENT     = 'SCHEME_CURRENT'     # Active scheme
 
 # Sub-group and setting GUIDs
 $SUB_SLEEP          = '238c9fa8-0aad-41ed-83f4-97be242c8f20'   # Sleep sub-group
@@ -62,7 +60,7 @@ function Set-PowerValue {
         [string]$Description
     )
     Write-LogInfo "  Setting: $Description => $Value"
-    $rc = & powercfg.exe /setacvalueindex $SchemeGuid $SubGroupGuid $SettingGuid $Value
+    & powercfg.exe /setacvalueindex $SchemeGuid $SubGroupGuid $SettingGuid $Value
     if ($LASTEXITCODE -ne 0) {
         Write-LogWarning "  powercfg returned exit code $LASTEXITCODE for: $Description"
     }

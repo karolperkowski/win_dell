@@ -174,7 +174,7 @@ function Install-WingetApps {
     foreach ($app in $apps) {
         Write-LogInfo "Installing $($app.Name) via winget..."
         try {
-            $result = & winget.exe install `
+            & winget.exe install `
                 --id $app.Id `
                 --silent `
                 --accept-package-agreements `
@@ -193,6 +193,8 @@ function Install-WingetApps {
         }
     }
 }
+
+function Set-AdditionalTweaks {
     Write-LogSection 'Additional tweaks'
 
     # Disable telemetry

@@ -37,7 +37,7 @@ function Write-Early {
         $dir = Split-Path $Script:_rawLog
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
         Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
-    } catch {}
+    } catch { Write-Host "[Orchestrator] Log write failed: $($_.Exception.Message)" }
 }
 Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
 Write-Early "PSScriptRoot : $PSScriptRoot"
@@ -322,7 +322,7 @@ try {
 } catch {
     Write-LogError "ORCHESTRATOR FATAL: $($_.Exception.Message)"
     Write-LogError "Line: $($_.InvocationInfo.ScriptLineNumber)"
-    try { Write-StateError -StageName 'Orchestrator' -ErrorMessage $_.Exception.Message } catch {}
+    try { Write-StateError -StageName 'Orchestrator' -ErrorMessage $_.Exception.Message } catch { Write-Host "[Orchestrator] State error write failed: $($_.Exception.Message)" }
     Close-Logger -FinalStatus 'FAILED'
     exit 1
 }

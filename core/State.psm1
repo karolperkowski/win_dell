@@ -92,13 +92,12 @@ function Read-StateFile {
     if (-not (Test-Path $Script:STATE_FILE)) { return $null }
 
     $raw = Get-Content -Path $Script:STATE_FILE -Raw -Encoding UTF8
-    try {
+    # -AsHashtable requires PS 6+; use the ConvertTo-Hashtable shim on PS 5.1
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
         return $raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-    } catch {
-        # ConvertFrom-Json -AsHashtable requires PS 6+; fall back for PS 5.1
-        $obj = $raw | ConvertFrom-Json
-        return ConvertTo-Hashtable -InputObject $obj
     }
+    $obj = $raw | ConvertFrom-Json
+    return ConvertTo-Hashtable -InputObject $obj
 }
 
 function ConvertTo-Hashtable {

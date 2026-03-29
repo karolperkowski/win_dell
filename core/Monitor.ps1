@@ -32,7 +32,7 @@ function Write-Early {
         $dir = Split-Path $Script:_rawLog
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
         Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
-    } catch {}
+    } catch { Write-Host "[Monitor] Log write failed: $_" }
 }
 Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
 Write-Early "PSScriptRoot : $PSScriptRoot"
@@ -65,7 +65,7 @@ try {
     Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);' `
              -Name 'SleepGuard' -Namespace 'WinDeploy' -ErrorAction Stop
     [WinDeploy.SleepGuard]::SetThreadExecutionState(0x80000003) | Out-Null
-} catch { <# non-fatal #> }
+} catch { Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] SleepGuard failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue }
 
 # ---------------------------------------------------------------------------
 # XAML
@@ -283,7 +283,10 @@ function Load-QrImage ($QrPath) {
         $bmp.EndInit(); $bmp.Freeze()
         $QrImage.Source    = $bmp
         $Script:LastQrPath = $QrPath
-    } catch { $QrImage.Source = $null }
+    } catch {
+        $QrImage.Source = $null
+        Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] QR image load failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -366,7 +369,7 @@ function Update-UI {
                     Margin       = [System.Windows.Thickness]::new(0,1,0,1)
                 }) | Out-Null
             }
-        } catch {}
+        } catch { Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WARN] Stage row render failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue }
     }
 
     # Completion
@@ -395,6 +398,18 @@ function Update-UI {
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds($REFRESH_MS)
 $timer.Add_Tick({ try { Update-UI } catch { $FooterNote.Text = "Error: $($_.Exception.Message)" } })
-$Window.Add_Loaded({ try { Update-UI } catch {}; $timer.Start() })
+$Window.Add_Loaded({
+    try { Update-UI } catch {
+        Add-Content -Path $Script:_rawLog -Value "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [ERROR] Monitor initial UI load failed: $($_.Exception.Message)" -Encoding UTF8 -ErrorAction SilentlyContinue
+        $FooterNote.Text = "Startup error - check early.log"
+    }
+    $timer.Start()
+})
 $Window.Add_Closed({ $timer.Stop() })
-[void]$Window.ShowDialog()
+try {
+    [void]$Window.ShowDialog()
+} catch {
+    $crashMsg = "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [FATAL] Monitor crashed: $($_.Exception.Message) Line:$($_.InvocationInfo.ScriptLineNumber)"
+    Add-Content -Path $Script:_rawLog -Value $crashMsg -Encoding UTF8 -ErrorAction SilentlyContinue
+    Add-Content -Path 'C:\ProgramData\WinDeploy\Logs\monitor_crash.log' -Value $crashMsg -Encoding UTF8 -ErrorAction SilentlyContinue
+}

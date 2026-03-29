@@ -198,6 +198,6 @@ try {
     try {
         $logFile = Join-Path $Script:LOG_DIR 'bootstrap.log'
         Add-Content -Path $logFile -Value $errMsg -Encoding UTF8
-    } catch { <# best-effort #> }
+    } catch { Write-Host "[Bootstrap] Log write failed: $($_.Exception.Message)" }
     exit 1
 }

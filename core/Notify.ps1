@@ -37,7 +37,7 @@ function Write-Early {
         $dir = Split-Path $Script:_rawLog
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
         Add-Content -Path $Script:_rawLog -Value $line -Encoding UTF8
-    } catch {}
+    } catch { Write-Host "[Notify] Log write failed: $($_.Exception.Message)" }
 }
 Write-Early "=== $(Split-Path -Leaf $MyInvocation.MyCommand.Path) started (PID $PID) ==="
 Write-Early "PSScriptRoot : $PSScriptRoot"
