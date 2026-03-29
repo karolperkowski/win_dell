@@ -10,6 +10,8 @@ jobs:
   lint:
     name: PSScriptAnalyzer + custom checks
     runs-on: windows-latest
+    # Skip when the manifest bot commits manifest.json back - nothing to lint changed
+    if: "!contains(github.event.head_commit.message, 'chore: update manifest')"
 
     steps:
       - name: Checkout
@@ -42,6 +44,7 @@ jobs:
   validate-tasks:
     name: Validate scheduled task XML
     runs-on: windows-latest
+    if: "!contains(github.event.head_commit.message, 'chore: update manifest')"
 
     steps:
       - name: Checkout
