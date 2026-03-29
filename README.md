@@ -43,7 +43,7 @@ irm ... | iex
             ├─ configures auto-logon
             ├─ registers all scheduled tasks
             ├─ launches Monitor.ps1 ──→ WPF window visible immediately
-            └─ launches Orchestrator.ps1 (hidden, runs stages)
+            └─ triggers WinDeploy-Resume task ──→ Orchestrator runs as SYSTEM
 
 Stage pipeline:
   1. PowerSettings        display/sleep never (AC power)
@@ -207,3 +207,5 @@ Manifest signing uses GPG. See `docs/gpg-setup.md`. Until configured, manifest i
 | Auto-logon not cleared | Cleanup stage skipped | AutoLogonSafety task clears it unconditionally after 6h |
 | PSGallery unreachable | No internet during WindowsUpdate stage | Fixed: pre-flight connectivity check with clear error message |
 | QR code missing in Monitor | All QR generation methods failed | Fixed: auth URL saved to `tailscale_auth_url.txt` as fallback |
+| Wide-character log files | PS 5.1 `*>>` redirect writes UTF-16LE | Fixed: launchers use `Out-File -Encoding UTF8` |
+| Orchestrator crash on first run | Bootstrap ran inline as user, not SYSTEM | Fixed: bootstrap triggers WinDeploy-Resume task |

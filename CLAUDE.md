@@ -82,6 +82,8 @@ Re-running updates scripts and preserves state. The monitor window launches imme
 | `CharacterSpacing` in WPF XAML | Silverlight-only — not available in WPF, remove it |
 | `-LogonType Interactive` with `-GroupId` | Incompatible parameter set — omit `-LogonType` for group-based principals |
 | `New-ScheduledTaskPrincipal -GroupId` + `-LogonType` | Invalid combination — use one or the other |
+| `(if ($x) { $y } else { $z })` as argument | PS 5.1 `if` is a statement, not expression — assign to variable first |
+| `*>> $file` in launcher scripts | Writes UTF-16LE on PS 5.1 — use `*>&1 \| Out-File -Append -Encoding UTF8` |
 
 ---
 
@@ -207,6 +209,7 @@ Use `Write-LogInfo`, `Write-LogSuccess`, `Write-LogWarning`, `Write-LogError` fr
 
 **Never use `Write-Host` in stage scripts — it bypasses the log file.**
 **Never use `Add-Content` for log writes — use `[System.IO.File]::AppendAllText` to handle concurrent writers (SYSTEM orchestrator + interactive user monitor).**
+**Never redirect output with `*>>` in launcher scripts — PS 5.1 writes UTF-16LE. Use `*>&1 | Out-File -Append -Encoding UTF8` instead.**
 
 ---
 
@@ -247,3 +250,7 @@ Manifest job skips on PRs — only runs on merged pushes.
 | Monitor off-screen | `WindowStartupLocation=Manual` with no coords | Use `CenterScreen` + `Add_Loaded` bounds clamp |
 | State case mismatch | Monitor read `rebootCount`, state writes `RebootCount` | Fixed: all state access uses PascalCase. Lint rule `State-CamelCase` enforces this. |
 | `EndBoundary` XML error in task | `-RepetitionInterval` without `-RepetitionDuration` | Add `-RepetitionDuration (New-TimeSpan -Days 9999)` |
+| Wide-character/UTF-16 log files | `*>>` redirection in PS 5.1 writes UTF-16LE | Fixed: launchers use `*>&1 \| Out-File -Append -Encoding UTF8` |
+| `$WD cannot be retrieved` | Bare `$WD` access under StrictMode in Orchestrator | Fixed: use `$Script:WD` after importing Config.psm1 |
+| Orchestrator silent crash on first run | Bootstrap ran Orchestrator inline as user, not SYSTEM | Fixed: bootstrap triggers WinDeploy-Resume task instead |
+| `'if' is not recognized` in AppInstall | Inline `if()` expression used as function argument | Fixed: PS 5.1 requires `if` as statement, not expression |
