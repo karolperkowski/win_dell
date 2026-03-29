@@ -228,9 +228,10 @@ try {
             $principal = if ($def.Principal -eq 'SYSTEM') {
                 New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
             } else {
-                # LogonType Interactive is required for tasks that show UI on the desktop.
-                # GroupId BUILTIN\Users means it runs for whoever is logged in.
-                New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -LogonType Interactive -RunLevel Limited
+                # -GroupId runs the task for any logged-on user in that group.
+                # Do NOT specify -LogonType with -GroupId - they are incompatible
+                # parameter sets and cause "parameter set cannot be resolved" error.
+                New-ScheduledTaskPrincipal -GroupId 'BUILTIN\Users' -RunLevel Limited
             }
 
             $limitMins  = [int](($def.TimeLimit - [Math]::Floor($def.TimeLimit)) * 60)
