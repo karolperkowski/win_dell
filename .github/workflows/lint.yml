@@ -71,7 +71,9 @@ jobs:
           foreach ($def in $taskDefs) {
               try {
                   if ($def.OneShot) {
-                      $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(6)
+                      $triggerAt = (Get-Date).AddHours(6)
+                      $trigger = New-ScheduledTaskTrigger -Once -At $triggerAt
+                      $trigger.EndBoundary = $triggerAt.AddHours(1).ToString('s')
                   } elseif ($def.Repeating) {
                       $trigger = New-ScheduledTaskTrigger `
                           -Once -At (Get-Date) `

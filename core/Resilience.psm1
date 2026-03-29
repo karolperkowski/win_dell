@@ -242,8 +242,13 @@ function Assert-AutoLogonSafetyTask {
             -Execute 'reg.exe' `
             -Argument 'add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f'
 
-        # Fire once, 6 hours from now
-        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(6)
+        # Fire once, 6 hours from now.
+        # EndBoundary must be set on the trigger when using DeleteExpiredTaskAfter,
+        # otherwise the XML schema fails with "missing required element or attribute".
+        # New-ScheduledTaskTrigger does not expose EndBoundary, so we set it directly.
+        $triggerAt  = (Get-Date).AddHours(6)
+        $trigger    = New-ScheduledTaskTrigger -Once -At $triggerAt
+        $trigger.EndBoundary = $triggerAt.AddHours(1).ToString('s')   # ISO 8601 local
 
         $principal = New-ScheduledTaskPrincipal `
             -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
