@@ -132,8 +132,8 @@ function Assert-ScheduledTasks {
         @{
             Name        = $Script:TASK_RESUME
             Script      = Join-Path $RepoRoot 'core\Orchestrator.ps1'
-            Args        = '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass'
             LogFile     = "$LOG_DIR\task_resume.log"
+            UseLauncher = $true     # hidden SYSTEM task - redirect all output to log
             Principal   = 'SYSTEM'
             Triggers    = @('Boot', 'Logon')
             TimeLimit   = 4
@@ -142,8 +142,8 @@ function Assert-ScheduledTasks {
         @{
             Name        = $Script:TASK_MONITOR
             Script      = Join-Path $RepoRoot 'core\Monitor.ps1'
-            Args        = '-WindowStyle Normal -ExecutionPolicy Bypass'
-            LogFile     = "$LOG_DIR\task_monitor.log"
+            LogFile     = $null
+            UseLauncher = $false    # interactive UI task - must run directly in user session
             Principal   = 'Users'
             Triggers    = @('Logon')
             TimeLimit   = 4
@@ -152,11 +152,11 @@ function Assert-ScheduledTasks {
         @{
             Name        = $Script:TASK_NOTIFY
             Script      = Join-Path $RepoRoot 'core\Notify.ps1'
-            Args        = '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass'
             LogFile     = "$LOG_DIR\task_notify.log"
+            UseLauncher = $true     # hidden background task - redirect output to log
             Principal   = 'Users'
             Triggers    = @('Logon')
-            TimeLimit   = 0.033   # 2 minutes
+            TimeLimit   = 0.033
             Description = 'WinDeploy notify - tray notification on completion'
         }
     )
@@ -168,12 +168,16 @@ function Assert-ScheduledTasks {
             continue
         }
 
-        # Check if already registered with a launcher for this task
+        # Check if already registered correctly
         $existing = Get-ScheduledTask -TaskName $def.Name -ErrorAction SilentlyContinue
         if ($existing) {
             $currentArgs = $existing.Actions[0].Arguments
-            $launcherName = "launch_$($def.Name.Replace('WinDeploy-','').ToLower()).ps1"
-            if ($currentArgs -like "*$launcherName*") {
+            $expectedFragment = if ($def.UseLauncher) {
+                "launch_$($def.Name.Replace('WinDeploy-','').ToLower()).ps1"
+            } else {
+                $def.Script
+            }
+            if ($currentArgs -like "*$expectedFragment*") {
                 Write-ResilienceLog "Task '$($def.Name)' OK." OK
                 continue
             }
@@ -184,29 +188,34 @@ function Assert-ScheduledTasks {
         }
 
         try {
-            # Wrap in a launcher script that captures all output to a log file.
-            # This ensures every task execution leaves a trace even before the
-            # script's own logging initialises.
-            $launcherPath = Join-Path $LOG_DIR "launch_$($def.Name.Replace('WinDeploy-','').ToLower()).ps1"
-            $logFile = $def.LogFile
-            $scriptPath = $def.Script
-            $innerArgs = $def.Args
+            if ($def.UseLauncher) {
+                # Hidden tasks: wrap in a launcher that redirects all output to a log file.
+                # This ensures every execution leaves a trace even if the script crashes
+                # before its own logging starts.
+                $launcherPath = Join-Path $LOG_DIR "launch_$($def.Name.Replace('WinDeploy-','').ToLower()).ps1"
+                $logFile      = $def.LogFile
+                $scriptPath   = $def.Script
 
-            $launcherContent = @"
+                $launcherContent = @"
 `$log = '$logFile'
 `$ts  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-Add-Content `$log "[`$ts] Task '$($def.Name)' launcher started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)" -Encoding UTF8
+Add-Content `$log "[`$ts] Task '$($def.Name)' started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)" -Encoding UTF8
 try {
-    & powershell.exe $innerArgs -File '$scriptPath' *>> `$log
+    & powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '$scriptPath' *>> `$log
     Add-Content `$log "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Exited: `$LASTEXITCODE" -Encoding UTF8
 } catch {
     Add-Content `$log "[`$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] LAUNCHER ERROR: `$(`$_.Exception.Message)" -Encoding UTF8
 }
 "@
-            $launcherContent | Set-Content -Path $launcherPath -Encoding UTF8
+                $launcherContent | Set-Content -Path $launcherPath -Encoding UTF8
+                $argString = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
+            } else {
+                # Interactive UI tasks (Monitor): run directly in the user session.
+                # A child process cannot show windows on the desktop - must be the direct task process.
+                $argString = "-ExecutionPolicy Bypass -WindowStyle Normal -File `"$($def.Script)`""
+            }
 
-            $argString = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
-            $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
+            $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
 
             $triggers = @()
             foreach ($t in $def.Triggers) {
