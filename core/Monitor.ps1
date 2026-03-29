@@ -25,16 +25,33 @@ $ConfirmPreference     = 'None'
 $Script:_rawLog = 'C:\ProgramData\WinDeploy\Logs\early.log'
 $Script:_crashLog = 'C:\ProgramData\WinDeploy\Logs\monitor_crash.log'
 
+# Append text to a log file allowing concurrent writers.
+# [System.IO.File]::AppendAllText uses FileShare.Read which blocks when
+# another process has the file open. FileStream with FileShare.ReadWrite
+# allows the Orchestrator (SYSTEM) and Monitor (user) to write simultaneously.
+function Append-Log {
+    param([string]$Path, [string]$Text)
+    try {
+        $dir = Split-Path $Path
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
+        $fs = [System.IO.FileStream]::new(
+            $Path,
+            [System.IO.FileMode]::Append,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::ReadWrite)
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+            $fs.Write($bytes, 0, $bytes.Length)
+        } finally { $fs.Dispose() }
+    } catch {}
+}
+
 function Write-Early {
     param([string]$Msg)
     $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$ts] $Msg"
     Write-Host $line
     try {
-        $dir = Split-Path $Script:_rawLog
-        if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null }
-        # AppendAllText uses a write-only stream - safe for concurrent writers
-        # (Orchestrator as SYSTEM and Monitor as User both write early.log)
         Append-Log $Script:_rawLog "$line`r`n"
     } catch { Write-Host "[Monitor] Log write failed: $_" }
 }
