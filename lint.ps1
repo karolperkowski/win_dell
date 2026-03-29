@@ -369,7 +369,24 @@ function Invoke-StatePropertyCheck {
         }
     }
 
-    Write-LintLog "  Schema keys   : $($schemaKeys.Count)"
+    # --- Rule D: Unsafe dynamic property access on state sub-objects ---
+    # ConvertFrom-Json returns PSCustomObject for nested objects (e.g. StageTimestamps).
+    # Accessing .PropertyName on PSCustomObject under StrictMode throws if the property
+    # doesn't exist yet. Safe patterns:
+    #   $obj.PSObject.Properties[$key]           <- always safe
+    #   $obj[$key]                               <- safe on hashtable, throws on PSCustomObject
+    #   $obj.KnownKey                            <- only safe if key is always present
+    # Flag: ($stateSubProp).$dynamicVar  or  (Get-StateProp ...).$var
+    for ($i = 0; $i -lt $monitorLines.Count; $i++) {
+        $line = $monitorLines[$i]
+        if ($line.TrimStart().StartsWith('#')) { continue }
+        # Pattern: (Get-StateProp ...) followed by .$variable or .$name
+        if ($line -match '\(Get-StateProp\b.*\)\.\$\w+' -and $line -notmatch 'PSObject') {
+            Add-Violation -File $monitorPs1 -Line ($i + 1) `
+                -Rule 'State-UnsafeSubAccess' `
+                -Message ('Unsafe sub-property access on Get-StateProp result. Under StrictMode, PSCustomObject from ConvertFrom-Json throws if property is absent. Use .PSObject.Properties[$key] instead.')
+        }
+    }
     Write-LintLog "  Bootstrap keys: $($bootKeys.Count)"
     Write-LintLog "  Monitor reads : $($monitorKeys.Count)"
 }

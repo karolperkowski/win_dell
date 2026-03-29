@@ -416,8 +416,14 @@ function Update-UI {
     foreach ($name in $STAGE_ORDER) {
         $st   = Get-StageStatus $state $name
         $tss  = ''
-        if ((Get-StateProp $state 'StageTimestamps' $null) -and (Get-StateProp $state 'StageTimestamps' @{}).$name) {
-            $tss = try { [datetime]::Parse((Get-StateProp $state 'StageTimestamps' @{}).$name).ToString('HH:mm:ss') } catch { '' }
+        $timestamps = Get-StateProp $state 'StageTimestamps' $null
+        if ($timestamps) {
+            # StageTimestamps may be a PSCustomObject (from ConvertFrom-Json) or a hashtable.
+            # PSObject.Properties lookup is safe on both - avoids StrictMode "property missing" throw.
+            $tsVal = $timestamps.PSObject.Properties[$name]
+            if ($tsVal) {
+                $tss = try { [datetime]::Parse($tsVal.Value).ToString('HH:mm:ss') } catch { '' }
+            }
         }
         $timeStr = switch ($st) { 'complete' { $tss } 'running' { 'Running...' } 'failed' { 'Failed' } default { 'Waiting' } }
         Add-StageRow -Label $STAGE_LABELS[$name] -Status $st -Time $timeStr
