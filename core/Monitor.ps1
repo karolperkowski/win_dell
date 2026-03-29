@@ -275,6 +275,20 @@ function Read-JsonFile ($Path) {
     try { return (Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
 }
 
+function Get-StateProp {
+    # Safe property access on state object - returns $default if property missing.
+    # Prevents "property cannot be found" errors when reading a partial state file
+    # written by bootstrap before the orchestrator has fully initialised it.
+    param($State, [string]$Name, $Default = $null)
+    if ($null -eq $State) { return $Default }
+    $val = $State.PSObject.Properties[$Name]
+    if ($null -eq $val) { return $Default }
+    $v = $val.Value
+    if ($null -eq $v) { return $Default }
+    return $v
+}
+
+
 function Format-Elapsed ($Iso) {
     try { $s = (Get-Date) - [datetime]::Parse($Iso); return '{0:D2}:{1:D2}:{2:D2}' -f [int]$s.TotalHours, $s.Minutes, $s.Seconds }
     catch { return '--:--:--' }
@@ -371,15 +385,15 @@ function Update-UI {
     $ts    = Read-JsonFile $TS_JSON
 
     if ($state) {
-        $started = try { [datetime]::Parse($state.BootstrappedAt).ToString('HH:mm:ss') } catch { '...' }
+        $started = try { [datetime]::Parse((Get-StateProp $state 'BootstrappedAt' '')).ToString('HH:mm:ss') } catch { '...' }
         $SubtitleLabel.Text = "$env:COMPUTERNAME  ·  Started $started"
-        $ElapsedLabel.Text  = Format-Elapsed $state.BootstrappedAt
-        $RebootLabel.Text   = if ($state.RebootCount) { [string]$state.RebootCount } else { '0' }
+        $ElapsedLabel.Text  = Format-Elapsed (Get-StateProp $state 'BootstrappedAt' '')
+        $RebootLabel.Text   = (Get-StateProp $state 'RebootCount' 0).ToString()
     } else {
         $FooterNote.Text = "Watching $STATE_FILE ..."; return
     }
 
-    $done  = @($state.CompletedStages).Count
+    $done  = @(Get-StateProp $state 'CompletedStages' @()).Count
     $total = $STAGE_ORDER.Count
     $pct   = [int](($done / $total) * 100)
     $StageCountLabel.Text = "$($done + 1) / $total"
@@ -391,15 +405,15 @@ function Update-UI {
     foreach ($name in $STAGE_ORDER) {
         $st   = Get-StageStatus $state $name
         $tss  = ''
-        if ($state.StageTimestamps -and $state.StageTimestamps.$name) {
-            $tss = try { [datetime]::Parse($state.StageTimestamps.$name).ToString('HH:mm:ss') } catch { '' }
+        if ((Get-StateProp $state 'StageTimestamps' $null) -and (Get-StateProp $state 'StageTimestamps' @{}).$name) {
+            $tss = try { [datetime]::Parse((Get-StateProp $state 'StageTimestamps' @{}).$name).ToString('HH:mm:ss') } catch { '' }
         }
         $timeStr = switch ($st) { 'complete' { $tss } 'running' { 'Running...' } 'failed' { 'Failed' } default { 'Waiting' } }
         Add-StageRow -Label $STAGE_LABELS[$name] -Status $st -Time $timeStr
     }
 
     # Tailscale QR panel
-    $showTs = ($state.CurrentStage -eq 'InstallTailscale') -or ($ts -and $ts.AuthUrl -and -not $ts.Registered)
+    $showTs = ((Get-StateProp $state 'CurrentStage' '') -eq 'InstallTailscale') -or ($ts -and $ts.AuthUrl -and -not $ts.Registered)
     if ($showTs -and $ts -and $ts.AuthUrl) {
         $TailscalePanel.Visibility = 'Visible'
         $TailscaleUrlText.Text     = $ts.AuthUrl
@@ -445,7 +459,7 @@ function Update-UI {
     }
 
     # Completion
-    if ($state.DeployComplete) {
+    if ((Get-StateProp $state 'DeployComplete' $false)) {
         $TitleLabel.Text           = 'Deployment complete'
         $StatusBadge.Text          = 'Complete'
         $StatusBadge.Foreground    = New-Brush '#4ADE80'
@@ -457,7 +471,7 @@ function Update-UI {
         if ($remaining -le 0) { $Window.Close(); return }
         $CloseCountdown.Text = "Closing in $remaining s"
     } else {
-        $lbl = if ($STAGE_LABELS[$state.CurrentStage]) { $STAGE_LABELS[$state.CurrentStage] } else { '...' }
+        $lbl = if ($STAGE_LABELS[(Get-StateProp $state 'CurrentStage' '')]) { $STAGE_LABELS[(Get-StateProp $state 'CurrentStage' '')] } else { '...' }
         $StatusBadge.Text         = $lbl
         $StatusBadge.Foreground   = New-Brush '#60A5FA'
         $StatusBorder.Background  = New-Brush '#0E1520'

@@ -160,14 +160,21 @@ try {
     # Step 4 - State file
     if (-not (Test-Path $Script:STATE_FILE)) {
         $initialState = [ordered]@{
-            SchemaVersion    = 1
-            BootstrappedAt   = (Get-Date -Format 'o')
-            RepoRoot         = $localRepo
-            ConfigFile       = Join-Path $localRepo 'config\settings.json'
-            CurrentStage     = 'PowerSettings'
-            CompletedStages  = @()
-            LastError        = $null
-            DeployComplete   = $false
+            SchemaVersion          = 1
+            BootstrappedAt         = (Get-Date -Format 'o')
+            LastUpdatedAt          = (Get-Date -Format 'o')
+            RepoRoot               = $localRepo
+            ConfigFile             = Join-Path $localRepo 'config\settings.json'
+            CurrentStage           = 'PowerSettings'
+            CompletedStages        = @()
+            FailedStages           = @()
+            StageTimestamps        = @{}
+            LastError              = $null
+            LastErrorStage         = $null
+            LastErrorTimestamp     = $null
+            RebootCount            = 0
+            DeployComplete         = $false
+            DeployCompletedAt      = $null
         }
         $initialState | ConvertTo-Json -Depth 5 |
             Set-Content -Path $Script:STATE_FILE -Encoding UTF8
