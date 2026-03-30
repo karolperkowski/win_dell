@@ -225,7 +225,7 @@ Signing uses GPG asymmetric keys. See `docs/gpg-setup.md`. GitHub Secrets needed
 - `GPG_PRIVATE_KEY` — full `-----BEGIN PGP PRIVATE KEY BLOCK-----` block
 - `GPG_PASSPHRASE` — key passphrase
 
-Paste the public key into `install.ps1` at `$GPG_PUBLIC_KEY`. Until configured, manifest is marked `pending` and install skips verification.
+Paste the public key into `install.ps1` at `$GPG_PUBLIC_KEY`. **Currently configured** — GPG signing is active and producing real signatures.
 
 ---
 
@@ -233,7 +233,7 @@ Paste the public key into `install.ps1` at `$GPG_PUBLIC_KEY`. Until configured, 
 
 Three jobs run in order on every push to main:
 
-1. **lint** — PSScriptAnalyzer rules + custom checks (PS51 compat, task XML, hardcoded paths, stage contracts, state property casing)
+1. **lint** — PSScriptAnalyzer + custom checks: PS51 compat, task XML, hardcoded paths, stage contracts, state property casing, `Add-Content` ban (`IO-BannedAddContent`), inline-if-as-argument ban (`PS51-InlineIfArgument`)
 2. **validate-tasks** — actually registers and unregisters each task definition against the Windows scheduler
 3. **sign manifest** — only runs if both above pass; generates and GPG-signs manifest.json
 
@@ -244,17 +244,16 @@ Manifest job skips on PRs — only runs on merged pushes.
 
 ## Common failure points
 
-| Symptom | Cause | Fix |
+| Symptom | Cause | Status |
 |---|---|---|
-| `stream was not readable` | `Add-Content` with concurrent SYSTEM writer | Fixed: `[System.IO.File]::AppendAllText` in Logging.psm1 |
-| `$Window cannot be retrieved` | XAML parse failed; `trap { continue }` resumed past assignment | Use `try/catch` around `XamlReader.Load`; check `monitor_crash.txt` |
-| `CharacterSpacing` XAML error | Silverlight-only property, not in WPF | Remove all `CharacterSpacing` attributes |
-| Tasks not registering | Resilience ran before repo was copied | Resilience must run after `Copy-RepoToDeployRoot` |
-| `parameter set cannot be resolved` | `-LogonType Interactive` with `-GroupId` | Remove `-LogonType` |
-| Monitor off-screen | `WindowStartupLocation=Manual` with no coords | Use `CenterScreen` + `Add_Loaded` bounds clamp |
-| State case mismatch | Monitor read `rebootCount`, state writes `RebootCount` | Fixed: all state access uses PascalCase. Lint rule `State-CamelCase` enforces this. |
+| `$Window cannot be retrieved` | XAML parse failed before assignment | Use `try/catch` around `XamlReader.Load`; check `monitor_crash.txt` |
+| `parameter set cannot be resolved` | `-LogonType Interactive` with `-GroupId` | Omit `-LogonType` for group-based principals |
 | `EndBoundary` XML error in task | `-RepetitionInterval` without `-RepetitionDuration` | Add `-RepetitionDuration (New-TimeSpan -Days 9999)` |
-| Wide-character/UTF-16 log files | `*>>` redirection in PS 5.1 writes UTF-16LE | Fixed: launchers use `*>&1 \| Out-File -Append -Encoding UTF8` |
-| `$WD cannot be retrieved` | Bare `$WD` access under StrictMode in Orchestrator | Fixed: use `$Script:WD` after importing Config.psm1 |
-| Orchestrator silent crash on first run | Bootstrap ran Orchestrator inline as user, not SYSTEM | Fixed: bootstrap triggers WinDeploy-Resume task instead |
-| `'if' is not recognized` in AppInstall | Inline `if()` expression used as function argument | Fixed: PS 5.1 requires `if` as statement, not expression |
+| `stream was not readable` | `Add-Content` with concurrent writer | **Fixed:** `Add-Content` banned, `AppendAllText` everywhere |
+| Wide-character/UTF-16 logs | `*>>` redirect in PS 5.1 | **Fixed:** launchers use `Out-File -Encoding UTF8` |
+| `$WD cannot be retrieved` | `Export-ModuleMember -Variable` unreliable | **Fixed:** Config.psm1 exports `Get-WDConfig` function |
+| Orchestrator crash on first run | Bootstrap ran inline as user, not SYSTEM | **Fixed:** bootstrap triggers WinDeploy-Resume task |
+| State case mismatch | camelCase vs PascalCase | **Fixed:** lint rule `State-CamelCase` enforces PascalCase |
+| `winget not found` under SYSTEM | winget not on SYSTEM PATH | **Fixed:** resolves full path from WindowsApps |
+| BrushConverter crash in Monitor | `switch` returned Object[] to brush converter | **Fixed:** `New-Brush` guards against array input |
+| `DisplayName` crash in AppInstall | StrictMode + missing registry property | **Fixed:** guard with `PSObject.Properties['DisplayName']` |
