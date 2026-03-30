@@ -68,12 +68,24 @@ function Write-TailscaleJson {
 }
 
 function Install-TailscaleViaWinget {
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        throw 'winget not found. winget ships with App Installer from the Microsoft Store.'
+    # Resolve winget path - not on PATH when running as SYSTEM
+    $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $wingetCmd) {
+        # Search WindowsApps for the winget executable
+        $wingetPath = Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe' -ErrorAction SilentlyContinue |
+                      Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
+        if ($wingetPath) {
+            Write-LogInfo "winget found at: $($wingetPath.FullName)"
+            $wingetExe = $wingetPath.FullName
+        } else {
+            throw 'winget not found. winget ships with App Installer from the Microsoft Store.'
+        }
+    } else {
+        $wingetExe = 'winget.exe'
     }
 
     Write-LogInfo "Installing Tailscale via winget ($TS_WINGET_ID)..."
-    & winget.exe install `
+    & $wingetExe install `
         --id $TS_WINGET_ID `
         --silent `
         --accept-package-agreements `

@@ -217,11 +217,22 @@ function Set-DisplayScale {
 function Install-WingetApps {
     Write-LogSection 'Winget app installs'
 
-    # Ensure winget is available
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        Write-LogWarning 'winget not found - skipping app installs.'
-        Write-LogWarning 'winget ships with App Installer from the Microsoft Store.'
-        return
+    # Resolve winget path - not on PATH when running as SYSTEM
+    $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $wingetCmd) {
+        # Search WindowsApps for the winget executable
+        $wingetPath = Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe' -ErrorAction SilentlyContinue |
+                      Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
+        if ($wingetPath) {
+            Write-LogInfo "winget found at: $($wingetPath.FullName)"
+            $wingetExe = $wingetPath.FullName
+        } else {
+            Write-LogWarning 'winget not found - skipping app installs.'
+            Write-LogWarning 'winget ships with App Installer from the Microsoft Store.'
+            return
+        }
+    } else {
+        $wingetExe = 'winget.exe'
     }
 
     $apps = @(
@@ -231,7 +242,7 @@ function Install-WingetApps {
     foreach ($app in $apps) {
         Write-LogInfo "Installing $($app.Name) via winget..."
         try {
-            & winget.exe install `
+            & $wingetExe install `
                 --id $app.Id `
                 --silent `
                 --accept-package-agreements `

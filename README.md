@@ -30,6 +30,14 @@ Force-kills all running tasks and processes, removes scheduled tasks, disables a
 | `-KeepState` | Preserve `state.json` (resume from current stage) |
 | `-Silent` | Skip confirmation prompt |
 
+## Reinstall
+
+```powershell
+irm "https://raw.githubusercontent.com/karolperkowski/win_dell/main/reinstall.ps1" | iex
+```
+
+Fully unattended: runs uninstall (silent, no prompts), then fresh install. One command, no interaction needed.
+
 ---
 
 ## What happens after install
