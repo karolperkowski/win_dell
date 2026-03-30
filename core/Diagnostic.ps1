@@ -11,6 +11,9 @@
     Run as: powershell.exe -ExecutionPolicy Bypass -File .\core\Diagnostic.ps1
 #>
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
 $DEPLOY_ROOT = 'C:\ProgramData\WinDeploy'
 $LOG_DIR     = "$DEPLOY_ROOT\Logs"
 $DIAG_LOG    = "$LOG_DIR\diagnostic.log"

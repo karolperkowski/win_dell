@@ -66,6 +66,7 @@ try {
 try {
     Import-Module (Join-Path $Script:CoreDir 'Config.psm1') -DisableNameChecking -Force
     $Script:WD = Get-WDConfig
+    if (-not $Script:WD) { Write-Early "FATAL: Get-WDConfig returned null"; exit 1 }
     Write-Early 'Config.psm1 loaded OK'
 } catch { Write-Early "FATAL: Config.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
@@ -211,7 +212,7 @@ Initialize-Logger -Stage 'Orchestrator'
 
     Write-LogSection 'WinDeploy Orchestrator Started'
     Write-LogInfo "Repo root : $Script:RepoRoot"
-    Write-LogInfo "Start time: $(Get-Date -Format 'o')"
+    Write-LogInfo "Start time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 
     # Guard: deployment already finished
     if (Test-DeployComplete) {

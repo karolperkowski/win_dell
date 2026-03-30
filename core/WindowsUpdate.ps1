@@ -188,23 +188,15 @@ function Get-UpdateCycleCount {
 }
 
 function Increment-UpdateCycleCount {
-    $state = Read-StateRaw   # bypass module to write a sub-key
+    $state = Get-DeployState
     if (-not $state['StageExtras']) { $state['StageExtras'] = @{} }
-    $count = if ($state['StageExtras'][$Script:WU_CYCLE_STATE_KEY]) {
-        [int]$state['StageExtras'][$Script:WU_CYCLE_STATE_KEY] + 1
-    } else { 1 }
+    $count = 1
+    if ($state['StageExtras'][$Script:WU_CYCLE_STATE_KEY]) {
+        $count = [int]$state['StageExtras'][$Script:WU_CYCLE_STATE_KEY] + 1
+    }
     $state['StageExtras'][$Script:WU_CYCLE_STATE_KEY] = $count
     Save-DeployState -State $state
     return $count
-}
-
-function Read-StateRaw {
-    $raw = Get-Content -Path $Script:STATE_FILE -Raw -Encoding UTF8
-    $obj = $raw | ConvertFrom-Json
-    # Shim for PS 5.1
-    $ht = @{}
-    foreach ($p in $obj.PSObject.Properties) { $ht[$p.Name] = $p.Value }
-    return $ht
 }
 
 # ---------------------------------------------------------------------------

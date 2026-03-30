@@ -213,10 +213,11 @@ function Assert-ScheduledTasks {
                 $logFile      = $def.LogFile
                 $scriptPath   = $def.Script
 
+                $escapedName = $def.Name -replace "'", "''"
                 $launcherContent = @"
 `$log = '$logFile'
 `$ts  = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-[System.IO.File]::AppendAllText(`$log, "[`$ts] Task '$($def.Name)' started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)`r`n", [System.Text.Encoding]::UTF8)
+[System.IO.File]::AppendAllText(`$log, "[`$ts] Task '$escapedName' started. PID:`$PID User:`$([Security.Principal.WindowsIdentity]::GetCurrent().Name)`r`n", [System.Text.Encoding]::UTF8)
 try {
     # Force UTF-8 output encoding to prevent UTF-16LE wide-character log files
     `$OutputEncoding = [System.Text.Encoding]::UTF8
