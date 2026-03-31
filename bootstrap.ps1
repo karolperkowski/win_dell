@@ -213,14 +213,14 @@ try {
         Write-BootstrapLog 'WARNING: Resilience module not available - tasks may not be registered.' WARN
     }
 
-    # Step 7 - Launch monitor immediately so progress is visible from the first run.
+    # Step 7 - Launch CLI monitor in a new console window.
     # Start-Process returns instantly (no -Wait) so the monitor runs alongside
     # the orchestrator rather than blocking it.
     $monitorPath = Join-Path $localRepo 'core\Monitor.ps1'
     if (Test-Path $monitorPath) {
-        Write-BootstrapLog 'Launching monitor window...'
+        Write-BootstrapLog 'Launching monitor...'
         Start-Process powershell.exe `
-            -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Normal -File `"$monitorPath`"" `
+            -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$monitorPath`"" `
             -ErrorAction SilentlyContinue
     }
 

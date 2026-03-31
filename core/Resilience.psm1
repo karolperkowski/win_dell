@@ -160,11 +160,11 @@ function Assert-ScheduledTasks {
             Name        = $Script:TASK_MONITOR
             Script      = Join-Path $RepoRoot 'core\Monitor.ps1'
             LogFile     = $null
-            UseLauncher = $false    # interactive UI task - must run directly in user session
+            UseLauncher = $false    # CLI monitor - runs in its own console window
             Principal   = 'Users'
             Triggers    = @('Logon')
             TimeLimit   = 4
-            Description = 'WinDeploy monitor - shows deployment progress'
+            Description = 'WinDeploy monitor - shows deployment progress (CLI)'
         },
         @{
             Name        = $Script:TASK_NOTIFY
@@ -231,9 +231,8 @@ try {
                 $launcherContent | Set-Content -Path $launcherPath -Encoding UTF8
                 $argString = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
             } else {
-                # Interactive UI tasks (Monitor): run directly in the user session.
-                # A child process cannot show windows on the desktop - must be the direct task process.
-                $argString = "-ExecutionPolicy Bypass -WindowStyle Normal -File `"$($def.Script)`""
+                # CLI monitor: run directly in the user session console.
+                $argString = "-ExecutionPolicy Bypass -NoProfile -File `"$($def.Script)`""
             }
 
             $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argString
