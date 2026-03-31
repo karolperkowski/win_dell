@@ -67,6 +67,26 @@ function Write-TailscaleJson {
     $data | ConvertTo-Json | Set-Content -Path $TS_JSON -Encoding UTF8
 }
 
+function Install-TailscaleViaMSI {
+    Write-LogInfo 'Downloading Tailscale MSI installer...'
+    $msiUrl  = 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi'
+    $msiPath = Join-Path $env:TEMP 'tailscale-setup.msi'
+    $msiLog  = Join-Path $env:TEMP 'tailscale_install.log'
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing -ErrorAction Stop
+    Write-LogInfo "MSI downloaded: $msiPath"
+
+    Write-LogInfo 'Running silent MSI install...'
+    $args = "/i `"$msiPath`" /quiet /norestart /log `"$msiLog`" TS_UNATTENDEDMODE=true"
+    $proc = Start-Process msiexec.exe -ArgumentList $args -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0) {
+        throw "Tailscale MSI install failed (exit $($proc.ExitCode)). Log: $msiLog"
+    }
+    Write-LogSuccess 'Tailscale installed via MSI.'
+    Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+}
+
 function Install-TailscaleViaWinget {
     # Resolve winget path - not on PATH when running as SYSTEM
     $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
@@ -78,10 +98,16 @@ function Install-TailscaleViaWinget {
             Write-LogInfo "winget found at: $($wingetPath.FullName)"
             $wingetExe = $wingetPath.FullName
         } else {
-            throw 'winget not found. winget ships with App Installer from the Microsoft Store.'
+            $wingetExe = $null
         }
     } else {
         $wingetExe = 'winget.exe'
+    }
+
+    if (-not $wingetExe) {
+        Write-LogWarning 'winget not found - falling back to direct MSI download.'
+        Install-TailscaleViaMSI
+        return
     }
 
     Write-LogInfo "Installing Tailscale via winget ($TS_WINGET_ID)..."
@@ -97,7 +123,10 @@ function Install-TailscaleViaWinget {
         # 0 = success, -1978335189 (0x8A150011) = already installed
         Write-LogSuccess "Tailscale installed via winget (exit $LASTEXITCODE)."
     } else {
-        throw "Tailscale winget install failed (exit $LASTEXITCODE)."
+        # Exit -1073741515 (0xC0000135) = DLL not found; common when SYSTEM
+        # context is missing VC++ runtime. Fall back to direct MSI.
+        Write-LogWarning "winget install failed (exit $LASTEXITCODE) - falling back to MSI."
+        Install-TailscaleViaMSI
     }
 }
 
