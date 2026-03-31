@@ -97,7 +97,8 @@ try {
     Write-LogSuccess 'Auto-logon disabled, credentials removed.'
 
     # Restore UAC to whatever it was before deployment started
-    $prevUAC = (Get-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue).WinDeployPrevUAC
+    $prevUACObj = Get-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue
+    $prevUAC = if ($prevUACObj -and $prevUACObj.PSObject.Properties['WinDeployPrevUAC']) { $prevUACObj.WinDeployPrevUAC } else { $null }
     if ($null -ne $prevUAC) {
         Set-ItemProperty -Path $polSystem -Name 'EnableLUA' -Value $prevUAC -Type DWord -ErrorAction SilentlyContinue
         Remove-ItemProperty -Path $polSystem -Name 'WinDeployPrevUAC' -ErrorAction SilentlyContinue
