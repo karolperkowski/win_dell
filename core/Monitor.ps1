@@ -144,10 +144,14 @@ function Write-Color {
     Write-Host $Text -ForegroundColor $Color -NoNewline
 }
 
+function Get-ConsoleWidth {
+    try { return [Math]::Max(80, [Console]::WindowWidth) } catch { return 80 }
+}
+
 function Write-Line {
     param([string]$Text = '', [ConsoleColor]$Color = 'Gray')
     # Pad to console width to clear previous content
-    $width = [Math]::Max(80, [Console]::WindowWidth)
+    $width = Get-ConsoleWidth
     Write-Host ($Text.PadRight($width)) -ForegroundColor $Color
 }
 
@@ -155,9 +159,9 @@ function Draw-Screen {
     $state = Read-StateFile
     $ts    = Read-TailscaleJson
 
-    # Position cursor at top
-    [Console]::SetCursorPosition(0, 0)
-    [Console]::CursorVisible = $false
+    # Position cursor at top — graceful fallback for non-interactive shells
+    try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host }
+    try { [Console]::CursorVisible = $false } catch {}
 
     $completed  = @(Get-StateProp $state 'CompletedStages' @())
     $failed     = @(Get-StateProp $state 'FailedStages' @())
@@ -202,7 +206,7 @@ function Draw-Screen {
     Write-Line ''
 
     # ── Progress bar ──
-    $barWidth = [Math]::Max(40, [Console]::WindowWidth - 8)
+    $barWidth = [Math]::Max(40, (Get-ConsoleWidth) - 8)
     $filled   = [Math]::Floor($barWidth * $pct / 100)
     $empty    = $barWidth - $filled
     Write-Color '  ' DarkGray
@@ -293,7 +297,7 @@ function Draw-Screen {
 
     # Pad remaining lines to clear old content
     $usedRows = 12 + $STAGE_ORDER.Count + $logLines.Count + $(if ($showTs) { 5 } else { 0 }) + $(if ($lastErr) { 5 } else { 0 })
-    $consoleHeight = [Math]::Max(30, [Console]::WindowHeight)
+    $consoleHeight = try { [Math]::Max(30, [Console]::WindowHeight) } catch { 30 }
     $remaining = $consoleHeight - $usedRows - 2
     for ($i = 0; $i -lt $remaining; $i++) { Write-Line '' }
 
@@ -322,7 +326,7 @@ try {
 } catch {}
 
 # Clear screen once at start
-[Console]::Clear()
+try { [Console]::Clear() } catch { Clear-Host }
 
 $Script:closeCountdown = $CLOSE_DELAY
 
@@ -346,7 +350,7 @@ try {
         Start-Sleep -Seconds $REFRESH_SEC
     }
 } finally {
-    [Console]::CursorVisible = $true
+    try { [Console]::CursorVisible = $true } catch {}
     # Reset sleep guard
     try { [WinDeploy.SleepGuard]::SetThreadExecutionState([System.Convert]::ToUInt32('80000000', 16)) | Out-Null } catch {}
 }
