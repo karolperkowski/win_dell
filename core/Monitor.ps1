@@ -137,31 +137,12 @@ function Get-StageLabel ([string]$Name) {
 }
 
 # ---------------------------------------------------------------------------
-# TUI Drawing
+# TUI Drawing — builds plain text, writes once per refresh via Clear-Host
 # ---------------------------------------------------------------------------
-function Write-Color {
-    param([string]$Text, [ConsoleColor]$Color = 'Gray')
-    Write-Host $Text -ForegroundColor $Color -NoNewline
-}
 
-function Get-ConsoleWidth {
-    try { return [Math]::Max(80, [Console]::WindowWidth) } catch { return 80 }
-}
-
-function Write-Line {
-    param([string]$Text = '', [ConsoleColor]$Color = 'Gray')
-    # Pad to console width to clear previous content
-    $width = Get-ConsoleWidth
-    Write-Host ($Text.PadRight($width)) -ForegroundColor $Color
-}
-
-function Draw-Screen {
+function Build-Screen {
     $state = Read-StateFile
     $ts    = Read-TailscaleJson
-
-    # Position cursor at top — graceful fallback for non-interactive shells
-    try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host }
-    try { [Console]::CursorVisible = $false } catch {}
 
     $completed  = @(Get-StateProp $state 'CompletedStages' @())
     $failed     = @(Get-StateProp $state 'FailedStages' @())
@@ -174,6 +155,7 @@ function Draw-Screen {
 
     $nComplete = $completed.Count
     $nTotal    = $STAGE_ORDER.Count
+    $pct = if ($nTotal -gt 0) { [Math]::Round(($nComplete / $nTotal) * 100) } else { 0 }
 
     # Elapsed
     $elapsed = '--:--:--'
@@ -185,131 +167,100 @@ function Draw-Screen {
         } catch {}
     }
 
-    # ── Header ──
-    Write-Line ''
-    if ($complete) {
-        Write-Line '  WINDEPLOY - Deployment complete' Green
-    } else {
-        Write-Line '  WINDEPLOY - Deployment in progress' Cyan
-    }
-    $hostname = $env:COMPUTERNAME
-    Write-Line "  $hostname" DarkGray
-    Write-Line ''
-
-    # ── Metrics ──
-    $pct = if ($nTotal -gt 0) { [Math]::Round(($nComplete / $nTotal) * 100) } else { 0 }
-    Write-Color '  Elapsed: ' DarkGray; Write-Color $elapsed White
-    Write-Color '    Reboots: ' DarkGray; Write-Color "$reboots" White
-    Write-Color '    Stage: ' DarkGray; Write-Color "$nComplete / $nTotal" White
-    Write-Color '    ' DarkGray; Write-Color "($pct%)" Cyan
-    Write-Host ''
-    Write-Line ''
-
-    # ── Progress bar ──
-    $barWidth = [Math]::Max(40, (Get-ConsoleWidth) - 8)
+    # Progress bar (ASCII)
+    $barWidth = 50
     $filled   = [Math]::Floor($barWidth * $pct / 100)
     $empty    = $barWidth - $filled
-    Write-Color '  ' DarkGray
-    Write-Color ([string]::new([char]0x2588, $filled)) Cyan
-    Write-Color ([string]::new([char]0x2591, $empty)) DarkGray
-    Write-Host ''
-    Write-Line ''
+    $bar      = ('#' * $filled) + ('-' * $empty)
 
-    # ── Stages ──
-    Write-Line '  STAGES' DarkGray
-    Write-Line ('  ' + [string]::new('-', 50)) DarkGray
+    $sb = [System.Text.StringBuilder]::new(2048)
+
+    # Header
+    [void]$sb.AppendLine('')
+    if ($complete) {
+        [void]$sb.AppendLine('  WINDEPLOY - Deployment complete')
+    } else {
+        [void]$sb.AppendLine('  WINDEPLOY - Deployment in progress')
+    }
+    [void]$sb.AppendLine("  $env:COMPUTERNAME")
+    [void]$sb.AppendLine('')
+
+    # Metrics
+    [void]$sb.AppendLine("  Elapsed: $elapsed    Reboots: $reboots    Stage: $nComplete / $nTotal ($pct%)")
+    [void]$sb.AppendLine('')
+
+    # Progress bar
+    [void]$sb.AppendLine("  [$bar]")
+    [void]$sb.AppendLine('')
+
+    # Stages
+    [void]$sb.AppendLine('  STAGES')
+    [void]$sb.AppendLine('  ' + ('-' * 52))
 
     foreach ($stageName in $STAGE_ORDER) {
-        $label = Get-StageLabel $stageName
-        $padded = $label.PadRight(28)
+        $label = (Get-StageLabel $stageName).PadRight(28)
 
         if ($stageName -in $completed) {
-            $icon = [char]0x2713  # checkmark
             $timeStr = ''
             if ($timestamps -and $timestamps.PSObject -and $timestamps.PSObject.Properties[$stageName]) {
                 try { $timeStr = ([datetime]$timestamps.$stageName).ToString('HH:mm:ss') } catch {}
             }
-            Write-Color "  $icon " Green
-            Write-Color $padded Green
-            Write-Line $timeStr DarkGray
+            [void]$sb.AppendLine("  [+] $label $timeStr")
         } elseif ($stageName -in $failed) {
-            $icon = [char]0x2717  # x mark
-            Write-Color "  $icon " Red
-            Write-Line $padded Red
+            [void]$sb.AppendLine("  [X] $label FAILED")
         } elseif ($stageName -eq $current -and -not $complete) {
-            $icon = [char]0x25B6  # play
-            Write-Color "  $icon " Yellow
-            Write-Color $padded Yellow
-            Write-Line 'Running...' Yellow
+            [void]$sb.AppendLine("  [>] $label Running...")
         } else {
-            $icon = [char]0x2013  # dash
-            Write-Color "  $icon " DarkGray
-            Write-Line $padded DarkGray
+            [void]$sb.AppendLine("  [ ] $label")
         }
     }
 
-    Write-Line ''
+    [void]$sb.AppendLine('')
 
-    # ── Tailscale auth URL ──
+    # Tailscale auth URL
     $showTs = ($current -eq 'InstallTailscale') -or ($ts -and $ts.AuthUrl -and -not $ts.Registered)
     if ($showTs -and $ts -and $ts.AuthUrl) {
-        Write-Line '  TAILSCALE AUTH' Cyan
-        Write-Line ('  ' + [string]::new('-', 50)) DarkGray
+        [void]$sb.AppendLine('  TAILSCALE AUTH')
+        [void]$sb.AppendLine('  ' + ('-' * 52))
         if ($ts.Registered) {
-            Write-Color '  Registered as: ' Green
-            Write-Line "$($ts.MachineName)" Green
+            [void]$sb.AppendLine("  Registered as: $($ts.MachineName)")
         } else {
-            Write-Line '  Scan this URL or open it in a browser:' DarkGray
-            Write-Line "  $($ts.AuthUrl)" White
-            Write-Line '  Waiting for scan...' Yellow
+            [void]$sb.AppendLine('  Open this URL in a browser:')
+            [void]$sb.AppendLine("  $($ts.AuthUrl)")
+            [void]$sb.AppendLine('  Waiting for scan...')
         }
-        Write-Line ''
+        [void]$sb.AppendLine('')
     }
 
-    # ── Error ──
+    # Error
     if ($lastErr) {
-        Write-Line '  LAST ERROR' Red
-        Write-Line ('  ' + [string]::new('-', 50)) DarkGray
-        Write-Line "  Stage: $lastErrStg" Red
-        Write-Line "  $lastErr" Red
-        Write-Line ''
+        [void]$sb.AppendLine('  LAST ERROR')
+        [void]$sb.AppendLine('  ' + ('-' * 52))
+        [void]$sb.AppendLine("  Stage: $lastErrStg")
+        [void]$sb.AppendLine("  $lastErr")
+        [void]$sb.AppendLine('')
     }
 
-    # ── Recent activity ──
-    Write-Line '  RECENT ACTIVITY' DarkGray
-    Write-Line ('  ' + [string]::new('-', 50)) DarkGray
+    # Recent activity
+    [void]$sb.AppendLine('  RECENT ACTIVITY')
+    [void]$sb.AppendLine('  ' + ('-' * 52))
 
-    $logLines = Get-SessionLogTail -Lines 8
+    $logLines = Get-SessionLogTail -Lines 6
     foreach ($line in $logLines) {
-        $trimmed = $line.Trim()
-        if ($trimmed -match '\[SUCCESS\]') {
-            Write-Line "  $trimmed" Green
-        } elseif ($trimmed -match '\[ERROR\]') {
-            Write-Line "  $trimmed" Red
-        } elseif ($trimmed -match '\[WARN\]') {
-            Write-Line "  $trimmed" Yellow
-        } elseif ($trimmed -match '\[SECTION\]') {
-            Write-Line "  $trimmed" Cyan
-        } else {
-            Write-Line "  $trimmed" DarkGray
-        }
+        [void]$sb.AppendLine("  $($line.Trim())")
     }
 
-    # Pad remaining lines to clear old content
-    $usedRows = 12 + $STAGE_ORDER.Count + $logLines.Count + $(if ($showTs) { 5 } else { 0 }) + $(if ($lastErr) { 5 } else { 0 })
-    $consoleHeight = try { [Math]::Max(30, [Console]::WindowHeight) } catch { 30 }
-    $remaining = $consoleHeight - $usedRows - 2
-    for ($i = 0; $i -lt $remaining; $i++) { Write-Line '' }
+    [void]$sb.AppendLine('')
 
-    # ── Footer ──
+    # Footer
     $now = Get-Date -Format 'HH:mm:ss'
     if ($complete) {
-        Write-Line "  Updated $now  |  Deployment complete  |  Closing in $Script:closeCountdown s" Green
+        [void]$sb.AppendLine("  Updated $now  |  Deployment complete  |  Closing in $Script:closeCountdown s")
     } else {
-        Write-Line "  Updated $now  |  Refreshing every ${REFRESH_SEC}s  |  Ctrl+C to hide" DarkGray
+        [void]$sb.AppendLine("  Updated $now  |  Refreshing every ${REFRESH_SEC}s  |  Ctrl+C to hide")
     }
 
-    return $complete
+    return @{ Text = $sb.ToString(); Complete = $complete }
 }
 
 # ---------------------------------------------------------------------------
@@ -317,23 +268,19 @@ function Draw-Screen {
 # ---------------------------------------------------------------------------
 $Host.UI.RawUI.WindowTitle = 'WinDeploy Monitor'
 
-# Set console size for a good TUI experience
-try {
-    if ([Console]::WindowWidth -lt 90) { [Console]::WindowWidth = 100 }
-    if ([Console]::WindowHeight -lt 35) { [Console]::WindowHeight = 40 }
-    [Console]::BufferWidth  = [Math]::Max([Console]::BufferWidth, [Console]::WindowWidth)
-    [Console]::BufferHeight = [Math]::Max([Console]::BufferHeight, [Console]::WindowHeight)
-} catch {}
-
-# Clear screen once at start
-try { [Console]::Clear() } catch { Clear-Host }
+Clear-Host
 
 $Script:closeCountdown = $CLOSE_DELAY
 
 try {
+    try { [Console]::CursorVisible = $false } catch {}
+
     while ($true) {
         try {
-            $done = Draw-Screen
+            $screen = Build-Screen
+            Clear-Host
+            Write-Host $screen.Text
+            $done = $screen.Complete
         } catch {
             Append-Log $Script:_crashLog ("[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] Draw error: $($_.Exception.Message)`r`n")
         }
@@ -341,8 +288,7 @@ try {
         if ($done) {
             $Script:closeCountdown -= $REFRESH_SEC
             if ($Script:closeCountdown -le 0) {
-                Write-Line ''
-                Write-Line '  Monitor closing. Deployment is complete.' Green
+                Write-Host "`n  Monitor closing. Deployment is complete."
                 break
             }
         }

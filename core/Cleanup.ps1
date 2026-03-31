@@ -63,7 +63,7 @@ function Write-CompletionReport {
     $lines | Set-Content -Path $report -Encoding UTF8
 
     Write-LogInfo "Completion report written to: $report"
-    $lines | ForEach-Object { Write-LogInfo $_ }
+    $lines | Where-Object { $_ -ne '' } | ForEach-Object { Write-LogInfo $_ }
 }
 
 try {
