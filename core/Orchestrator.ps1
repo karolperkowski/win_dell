@@ -80,6 +80,10 @@ try {
     Write-Early 'Logging.psm1 loaded OK'
 } catch { Write-Early "FATAL: Logging.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
+# Load webhook notification helper (non-fatal if missing)
+$webhookScript = Join-Path $Script:CoreDir 'Notify-Webhook.ps1'
+if (Test-Path $webhookScript) { . $webhookScript }
+
 $Script:TASK_NAME = $Script:WD.TaskResume
 
 # Stage map: name → script. Execution order is driven by $WD.StageOrder in State.psm1.
@@ -101,6 +105,86 @@ $Script:MAX_CONSECUTIVE_FAILURES = 3
 # Helper functions
 # ---------------------------------------------------------------------------
 
+function Test-StagePrerequisites {
+    <#
+    .SYNOPSIS
+        Checks prerequisites before running a stage.
+    .DESCRIPTION
+        Returns $true if the stage may proceed, or a descriptive string
+        explaining why it must be skipped.
+    #>
+    param(
+        [string]$StageName,
+        [hashtable]$Config
+    )
+
+    switch ($StageName) {
+        'WindowsUpdate' {
+            $freeGB = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+            if ($freeGB -lt 10) {
+                return "Insufficient disk space: ${freeGB}GB free (need 10GB+)"
+            }
+            try {
+                $null = [System.Net.Dns]::GetHostAddresses('www.powershellgallery.com')
+            } catch {
+                return 'Cannot resolve www.powershellgallery.com - PSGallery unreachable'
+            }
+        }
+        'InstallTailscale' {
+            try {
+                $null = [System.Net.Dns]::GetHostAddresses('tailscale.com')
+            } catch {
+                return 'Cannot resolve tailscale.com - no internet connection'
+            }
+        }
+        'InstallDellSupportAssist' {
+            $hasInternet = $true
+            try {
+                $null = [System.Net.Dns]::GetHostAddresses('dl.dell.com')
+            } catch {
+                $hasInternet = $false
+            }
+            $hasLocal = $false
+            if ($Config -and $Config['Apps'] -and $Config['Apps']['InstallDellSupportAssist']) {
+                $localPath = $Config['Apps']['InstallDellSupportAssist']['LocalPath']
+                if ($localPath) {
+                    $appsDir = Join-Path $Script:RepoRoot 'apps'
+                    $fullPath = Join-Path $appsDir $localPath
+                    if (Test-Path $fullPath) { $hasLocal = $true }
+                    # Also check if it is an absolute path
+                    if ((-not $hasLocal) -and (Test-Path $localPath)) { $hasLocal = $true }
+                }
+            }
+            if ((-not $hasInternet) -and (-not $hasLocal)) {
+                return 'No internet (dl.dell.com) and no local installer found for Dell SupportAssist'
+            }
+        }
+        'InstallDellPowerManager' {
+            $hasInternet = $true
+            try {
+                $null = [System.Net.Dns]::GetHostAddresses('dl.dell.com')
+            } catch {
+                $hasInternet = $false
+            }
+            $hasLocal = $false
+            if ($Config -and $Config['Apps'] -and $Config['Apps']['InstallDellPowerManager']) {
+                $localPath = $Config['Apps']['InstallDellPowerManager']['LocalPath']
+                if ($localPath) {
+                    $appsDir = Join-Path $Script:RepoRoot 'apps'
+                    $fullPath = Join-Path $appsDir $localPath
+                    if (Test-Path $fullPath) { $hasLocal = $true }
+                    if ((-not $hasLocal) -and (Test-Path $localPath)) { $hasLocal = $true }
+                }
+            }
+            if ((-not $hasInternet) -and (-not $hasLocal)) {
+                return 'No internet (dl.dell.com) and no local installer found for Dell Power Manager'
+            }
+        }
+    }
+
+    return $true
+}
+
 function Invoke-Stage {
     <#
     Runs a single stage script, passing -StageName and -Config.
@@ -120,6 +204,18 @@ function Invoke-Stage {
         return @{ Status = 'Failed'; Message = "Script not found: $ScriptPath" }
     }
 
+    # Resolve per-stage timeout from config (default 60 minutes)
+    $timeoutMinutes = 60
+    if ($Config -and $Config['Stages']) {
+        $stgCfg = $Config['Stages'][$StageName]
+        if ($stgCfg -and $stgCfg['TimeoutMinutes']) {
+            $timeoutMinutes = [int]$stgCfg['TimeoutMinutes']
+        }
+    }
+    Write-LogInfo "Stage timeout: $timeoutMinutes minutes"
+
+    $stageTimer = [System.Diagnostics.Stopwatch]::StartNew()
+
     try {
         # Each stage script is a dot-sourced function container.
         # It must expose an Invoke-Stage function and return a hashtable.
@@ -128,13 +224,22 @@ function Invoke-Stage {
             # Treat missing return as success (backwards compat)
             $result = @{ Status = 'Complete'; Message = 'No return value - assumed complete.' }
         }
-        return $result
     } catch {
-        return @{
+        $result = @{
             Status  = 'Failed'
             Message = "Unhandled exception in stage '$StageName': $($_.Exception.Message)"
         }
     }
+
+    $stageTimer.Stop()
+    $elapsedMin = [math]::Round($stageTimer.Elapsed.TotalMinutes, 1)
+    Write-LogInfo "Stage '$StageName' elapsed time: $elapsedMin minutes"
+
+    if ($elapsedMin -gt $timeoutMinutes) {
+        Write-LogWarning "Stage '$StageName' exceeded timeout ($elapsedMin min > $timeoutMinutes min configured)"
+    }
+
+    return $result
 }
 
 function Remove-ResumeTask {
@@ -226,6 +331,20 @@ Initialize-Logger -Stage 'Orchestrator'
     # Load config once
     $config = Load-Config
 
+    # Load webhook config
+    $webhookUrl = ''
+    $notifyConfig = @{}
+    if ($config['Notifications']) {
+        $notifyConfig = $config['Notifications']
+        $webhookUrl = $notifyConfig['Webhook']
+    }
+
+    # Send start notification
+    if ($webhookUrl -and $notifyConfig['OnStart'] -ne $false) {
+        Send-DeployNotification -WebhookUrl $webhookUrl -Event 'Start' `
+            -MachineName $env:COMPUTERNAME -Message "Starting deployment pipeline."
+    }
+
     # Print current stage summary
     Write-LogSection 'Stage Status Summary'
     Get-StageStatus | ForEach-Object {
@@ -243,6 +362,14 @@ Initialize-Logger -Stage 'Orchestrator'
         # Skip completed stages
         if (Test-StageComplete -StageName $stageName) {
             Write-LogInfo "Stage '$stageName' already complete - skipping."
+            continue
+        }
+
+        # Pre-stage health checks
+        $prereqResult = Test-StagePrerequisites -StageName $stageName -Config $config
+        if ($prereqResult -ne $true) {
+            Write-LogWarning "Skipping '$stageName': $prereqResult"
+            Set-StageComplete -StageName $stageName -Message "Skipped: $prereqResult"
             continue
         }
 
@@ -282,6 +409,13 @@ Initialize-Logger -Stage 'Orchestrator'
                 Write-LogError "Stage '$stageName' FAILED: $($result.Message)"
                 Write-LogError "Consecutive failures: $consecutiveFailures / $Script:MAX_CONSECUTIVE_FAILURES"
 
+                # Webhook: stage failure notification
+                if ($webhookUrl -and $notifyConfig['OnStageFailure'] -ne $false) {
+                    Send-DeployNotification -WebhookUrl $webhookUrl -Event 'StageFailure' `
+                        -MachineName $env:COMPUTERNAME -StageName $stageName `
+                        -Message $result.Message -ErrorDetail $result.Message
+                }
+
                 if ($consecutiveFailures -ge $Script:MAX_CONSECUTIVE_FAILURES) {
                     Write-LogError 'Maximum consecutive failures reached. Aborting deployment.'
                     Write-LogError 'Review logs at C:\ProgramData\WinDeploy\Logs and fix the issue.'
@@ -318,6 +452,12 @@ Initialize-Logger -Stage 'Orchestrator'
     # ---------------------------------------------------------------------------
     Set-DeployComplete
     Write-LogSection 'ALL STAGES COMPLETE'
+
+    # Webhook: completion notification
+    if ($webhookUrl -and $notifyConfig['OnComplete'] -ne $false) {
+        Send-DeployNotification -WebhookUrl $webhookUrl -Event 'Complete' `
+            -MachineName $env:COMPUTERNAME -Message "All stages finished."
+    }
 
     $elapsed = (Get-Date) - [datetime](Get-DeployState)['BootstrappedAt']
     Write-LogSuccess "Total deployment time: $([Math]::Round($elapsed.TotalMinutes, 1)) minutes"

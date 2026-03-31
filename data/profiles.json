@@ -1,0 +1,17 @@
+{
+    "_comment": "Application profiles for winget installs. Each profile is an array of objects with Id and Name.",
+    "Default": [
+        { "Id": "Google.Chrome", "Name": "Google Chrome" }
+    ],
+    "Developer": [
+        { "Id": "Google.Chrome", "Name": "Google Chrome" },
+        { "Id": "Microsoft.VisualStudioCode", "Name": "VS Code" },
+        { "Id": "Git.Git", "Name": "Git" },
+        { "Id": "OpenJS.NodeJS.LTS", "Name": "Node.js LTS" }
+    ],
+    "EndUser": [
+        { "Id": "Google.Chrome", "Name": "Google Chrome" },
+        { "Id": "Zoom.Zoom", "Name": "Zoom" }
+    ],
+    "Kiosk": []
+}

@@ -4,30 +4,42 @@
   "Stages": {
     "WindowsUpdate": {
       "ContinueOnError": false,
-      "MaxCycles": 5
+      "MaxCycles": 5,
+      "TimeoutMinutes": 180
     },
     "PowerSettings": {
-      "ContinueOnError": false
+      "ContinueOnError": false,
+      "TimeoutMinutes": 60
     },
     "Debloat": {
       "ContinueOnError": true,
-      "RemoveOptional": false
+      "RemoveOptional": false,
+      "TimeoutMinutes": 60
     },
     "WinTweaks": {
       "ContinueOnError": true,
-      "RunWinUtil": true
+      "RunWinUtil": true,
+      "TimeoutMinutes": 60,
+      "Timezone": "Eastern Standard Time",
+      "DisplayScale": 100,
+      "NumLockOnStartup": true,
+      "AppProfile": "Default"
     },
     "InstallDellSupportAssist": {
-      "ContinueOnError": true
+      "ContinueOnError": true,
+      "TimeoutMinutes": 60
     },
     "InstallDellPowerManager": {
-      "ContinueOnError": true
+      "ContinueOnError": true,
+      "TimeoutMinutes": 60
     },
     "InstallTailscale": {
-      "ContinueOnError": false
+      "ContinueOnError": false,
+      "TimeoutMinutes": 45
     },
     "Cleanup": {
-      "FinalReboot": true
+      "FinalReboot": true,
+      "TimeoutMinutes": 60
     }
   },
 
@@ -93,6 +105,14 @@
     "AcceptDNS": true,
     "_comment_Hostname": "Leave blank to use the Windows computer name.",
     "Hostname": ""
+  },
+
+  "Notifications": {
+    "_comment": "Webhook URL for Slack, Teams, or any service accepting JSON POST. Leave empty to disable.",
+    "Webhook": "",
+    "OnStart": true,
+    "OnStageFailure": true,
+    "OnComplete": true
   },
 
   "Overrides": {}

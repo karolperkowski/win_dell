@@ -130,6 +130,17 @@ function Remove-BingSearch {
 }
 
 function Set-NumLockOn {
+    # Check config for NumLock setting
+    $numLockEnabled = $true
+    if ($Config['WinTweaks'] -and $Config['WinTweaks']['NumLockOnStartup'] -eq $false) {
+        $numLockEnabled = $false
+    }
+
+    if (-not $numLockEnabled) {
+        Write-LogInfo 'NumLock on startup disabled via config. Skipping.'
+        return
+    }
+
     Write-LogSection 'NumLock on at startup'
     # HKU\.DEFAULT = affects the login screen and any user who hasn't changed it
     Set-Reg 'Registry::HKU\.DEFAULT\Control Panel\Keyboard' 'InitialKeyboardIndicators' '2' String
@@ -178,10 +189,17 @@ function Set-DisplayScale {
     Change takes effect after the next logoff/reboot, which the deployment
     already performs after WinTweaks completes.
     #>
-    Write-LogSection 'Display scaling -> 100%'
+    # Load display scale from config (percentage, default 100)
+    $displayScale = 100
+    if ($Config['WinTweaks'] -and $Config['WinTweaks']['DisplayScale']) {
+        $displayScale = $Config['WinTweaks']['DisplayScale']
+    }
+    $dpi = [int](96 * $displayScale / 100)
+
+    Write-LogSection "Display scaling -> $displayScale% ($dpi DPI)"
 
     # Current user
-    Set-Reg 'HKCU:\Control Panel\Desktop' 'LogPixels'      96 DWord
+    Set-Reg 'HKCU:\Control Panel\Desktop' 'LogPixels'      $dpi DWord
     Set-Reg 'HKCU:\Control Panel\Desktop' 'Win8DpiScaling'  1 DWord
 
     # Clear any per-monitor DPI overrides stored by Windows 11
@@ -201,7 +219,7 @@ function Set-DisplayScale {
             if ($LASTEXITCODE -ne 0) {
                 Write-LogWarning "  Failed to load default user hive for DPI (exit $LASTEXITCODE). Skipping."
             } else {
-                Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'LogPixels'       96 DWord
+                Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'LogPixels'       $dpi DWord
                 Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'Win8DpiScaling'   1 DWord
                 Write-LogInfo '  Default user hive updated for DPI.'
             }
@@ -211,7 +229,7 @@ function Set-DisplayScale {
         }
     }
 
-    Write-LogInfo '  Display scale set to 100% (96 DPI). Takes effect after reboot.'
+    Write-LogInfo "  Display scale set to $displayScale% ($dpi DPI). Takes effect after reboot."
 }
 
 function Install-WingetApps {
@@ -235,9 +253,29 @@ function Install-WingetApps {
         $wingetExe = 'winget.exe'
     }
 
-    $apps = @(
-        @{ Id = 'Google.Chrome'; Name = 'Google Chrome' }
-    )
+    # Load app list from config profile
+    $profileName = 'Default'
+    if ($Config['WinTweaks'] -and $Config['WinTweaks']['AppProfile']) {
+        $profileName = $Config['WinTweaks']['AppProfile']
+    }
+
+    $profilesFile = Join-Path (Split-Path $coreDir -Parent) 'data\profiles.json'
+    $apps = @()
+    if (Test-Path $profilesFile) {
+        try {
+            $profiles = Get-Content $profilesFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            $profileApps = $profiles.$profileName
+            if ($profileApps) {
+                $apps = @($profileApps)
+            } else {
+                Write-LogWarning "Profile '$profileName' not found in profiles.json. Using empty list."
+            }
+        } catch {
+            Write-LogWarning "Failed to load profiles.json: $($_.Exception.Message)"
+        }
+    } else {
+        Write-LogWarning "profiles.json not found at '$profilesFile'. Skipping app installs."
+    }
 
     foreach ($app in $apps) {
         Write-LogInfo "Installing $($app.Name) via winget..."
@@ -292,10 +330,14 @@ function Set-AdditionalTweaks {
     # Disable fast startup (can cause issues with dual-boot and some hardware)
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0
 
-    # Set timezone to Eastern Time (New York)
+    # Set timezone (configurable via settings.json)
+    $timezone = 'Eastern Standard Time'
+    if ($Config['WinTweaks'] -and $Config['WinTweaks']['Timezone']) {
+        $timezone = $Config['WinTweaks']['Timezone']
+    }
     try {
-        & tzutil.exe /s "Eastern Standard Time"
-        Write-LogInfo '  Timezone set to Eastern Standard Time (New York)'
+        & tzutil.exe /s $timezone
+        Write-LogInfo "  Timezone set to $timezone"
     } catch {
         Write-LogWarning "  tzutil failed: $($_.Exception.Message)"
     }
