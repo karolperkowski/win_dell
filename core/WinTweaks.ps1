@@ -253,6 +253,21 @@ function Install-WingetApps {
         $wingetExe = 'winget.exe'
     }
 
+    # When running as SYSTEM, winget's UWP dependencies (VCLibs, UI.Xaml) are
+    # not on PATH, causing STATUS_DLL_NOT_FOUND (0xC0000135). Add them.
+    $depDirs = @(
+        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.VCLibs.140.00.UWPDesktop_*_x64__8wekyb3d8bbwe' -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.UI.Xaml.2.8_*_x64__8wekyb3d8bbwe' -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+    ) | Where-Object { $_ }
+
+    if ($depDirs) {
+        $extraPaths = ($depDirs | ForEach-Object { $_.FullName }) -join ';'
+        $env:PATH = "$extraPaths;$env:PATH"
+        Write-LogInfo "Added winget dependency paths: $extraPaths"
+    }
+
     # Load app list from config profile
     $profileName = 'Default'
     if ($Config['WinTweaks'] -and $Config['WinTweaks']['AppProfile']) {
