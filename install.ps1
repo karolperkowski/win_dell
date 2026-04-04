@@ -161,9 +161,10 @@ function Get-VerifiedManifest {
             $manifestFile= Join-Path $env:TEMP 'windeploy_manifest.json'
             $sigFile     = Join-Path $env:TEMP 'windeploy_manifest.sig'
 
-            $GPG_PUBLIC_KEY       | Set-Content $pubKeyFile   -Encoding UTF8
-            $manifestJson         | Set-Content $manifestFile -Encoding UTF8
-            [System.IO.File]::WriteAllText($sigFile, $remoteSig)
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($pubKeyFile,   $GPG_PUBLIC_KEY, $utf8NoBom)
+            [System.IO.File]::WriteAllText($manifestFile, $manifestJson,   $utf8NoBom)
+            [System.IO.File]::WriteAllText($sigFile,      $remoteSig,      $utf8NoBom)
 
             & gpg --batch --import $pubKeyFile 2>$null | Out-Null
             $verifyResult = & gpg --batch --verify $sigFile $manifestFile 2>&1
