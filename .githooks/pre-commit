@@ -1,0 +1,6 @@
+#!/bin/sh
+# Pre-commit hook: regenerates INDEX.md and stages it if changed.
+# Enable with: git config core.hooksPath .githooks
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$REPO_ROOT/.githooks/pre-commit.ps1" "$REPO_ROOT"
+exit $?

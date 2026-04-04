@@ -34,6 +34,16 @@ jobs:
           & powershell.exe -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\lint.ps1" -RepoRoot "$env:GITHUB_WORKSPACE" -Strict
           exit $LASTEXITCODE
 
+      - name: Verify INDEX.md is up to date
+        shell: powershell
+        run: |
+          & powershell.exe -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\tools\Update-Index.ps1" -RepoRoot "$env:GITHUB_WORKSPACE"
+          $diff = git diff --name-only INDEX.md
+          if ($diff) {
+            Write-Error "INDEX.md is out of date. Run 'tools\Update-Index.ps1' locally or enable the pre-commit hook via: git config core.hooksPath .githooks"
+            exit 1
+          }
+
       - name: Upload violations on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -164,17 +174,11 @@ jobs:
               exit 0
           }
 
-          $env:GPG_PRIVATE_KEY | gpg --batch --import 2>&1
+          $env:GPG_PRIVATE_KEY | gpg --batch --import
           if ($LASTEXITCODE -ne 0) { throw 'GPG key import failed' }
 
-          $ppFile = Join-Path $env:TEMP 'gpg_pp.txt'
-          [System.IO.File]::WriteAllText($ppFile, $env:GPG_PASSPHRASE)
-          try {
-              gpg --batch --yes --pinentry-mode loopback --passphrase-file $ppFile --armor --detach-sign manifest.json 2>&1
-              if ($LASTEXITCODE -ne 0) { throw 'GPG signing failed' }
-          } finally {
-              Remove-Item $ppFile -Force -ErrorAction SilentlyContinue
-          }
+          echo $env:GPG_PASSPHRASE | gpg --batch --yes --passphrase-fd 0 --armor --detach-sign manifest.json
+          if ($LASTEXITCODE -ne 0) { throw 'GPG signing failed' }
 
           Move-Item manifest.json.asc manifest.sig -Force
           Write-Host "Manifest signed." -ForegroundColor Green
