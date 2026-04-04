@@ -177,8 +177,12 @@ jobs:
           $env:GPG_PRIVATE_KEY | gpg --batch --import
           if ($LASTEXITCODE -ne 0) { throw 'GPG key import failed' }
 
-          echo $env:GPG_PASSPHRASE | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign manifest.json
-          if ($LASTEXITCODE -ne 0) { throw 'GPG signing failed' }
+          $passFile = Join-Path $env:TEMP 'gpg_pass.txt'
+          [System.IO.File]::WriteAllText($passFile, $env:GPG_PASSPHRASE)
+          try {
+              gpg --batch --yes --pinentry-mode loopback --passphrase-file $passFile --armor --detach-sign manifest.json
+              if ($LASTEXITCODE -ne 0) { throw 'GPG signing failed' }
+          } finally { Remove-Item $passFile -Force -ErrorAction SilentlyContinue }
 
           Move-Item manifest.json.asc manifest.sig -Force
           Write-Host "Manifest signed." -ForegroundColor Green
