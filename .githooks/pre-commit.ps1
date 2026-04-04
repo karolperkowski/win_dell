@@ -26,7 +26,9 @@ try {
     Push-Location $RepoRoot
     $diff = & git diff --name-only -- INDEX.md 2>$null
     if ($diff) {
-        & git add INDEX.md
+        # Suppress stderr (CRLF warnings) so PS 5.1 $ErrorActionPreference=Stop
+        # does not treat git's informational warnings as terminating errors.
+        & git add INDEX.md 2>&1 | Out-Null
         Write-Host 'pre-commit: INDEX.md updated and staged.'
     }
     Pop-Location
