@@ -75,15 +75,6 @@ function Invoke-SelfElevation {
     exit 0
 }
 
-function Initialize-DeployDirectories {
-    foreach ($dir in @($Script:DEPLOY_ROOT, $Script:LOG_DIR)) {
-        if (-not (Test-Path $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            Write-Host "[Bootstrap] Created directory: $dir"
-        }
-    }
-}
-
 function Copy-RepoToDeployRoot {
     <#
     Copies the entire repo to C:\ProgramData\WinDeploy\repo so the scheduled

@@ -475,4 +475,5 @@ Export-ModuleMember -Function @(
     'Add-RebootCount'
     'Get-StageStatus'
     'Reset-DeployState'
+    'ConvertTo-Hashtable'
 )

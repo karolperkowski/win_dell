@@ -287,26 +287,11 @@ function Load-Config {
         $raw = Get-Content -Path $configPath -Raw -Encoding UTF8
         # ConvertFrom-Json returns PSCustomObject; coerce to hashtable
         $obj = $raw | ConvertFrom-Json
-        return ConvertPSObjectToHashtable $obj
+        return ConvertTo-Hashtable -InputObject $obj
     } catch {
         Write-LogWarning "Failed to parse config file: $($_.Exception.Message)"
         return @{}
     }
-}
-
-function ConvertPSObjectToHashtable {
-    param([object]$Object)
-    if ($Object -is [System.Management.Automation.PSCustomObject]) {
-        $ht = @{}
-        foreach ($prop in $Object.PSObject.Properties) {
-            $ht[$prop.Name] = ConvertPSObjectToHashtable $prop.Value
-        }
-        return $ht
-    }
-    if ($Object -is [System.Collections.IEnumerable] -and $Object -isnot [string]) {
-        return @($Object | ForEach-Object { ConvertPSObjectToHashtable $_ })
-    }
-    return $Object
 }
 
 # ---------------------------------------------------------------------------
