@@ -119,17 +119,23 @@ $totalSize = 0
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($RepoRoot.Length + 1).Replace('\', '/')
 
-    # Line count for text files; also compute LF-normalized size for consistency
-    # across platforms (CRLF on Windows vs LF on CI/Linux).
+    # Compute LF-normalized size and line count for all non-binary files.
+    # In PS 5.1, dotfiles like .gitignore have extension '.gitignore' (not ''),
+    # so a whitelist approach misses them. Use a binary blacklist instead so
+    # all text files (including dotfiles) get consistent CRLF->LF normalization
+    # across platforms (Windows CRLF checkout vs CI LF checkout).
     $lineCount = $null
     $size = $f.Length
-    $textExts = @('.ps1', '.psm1', '.json', '.yml', '.yaml', '.md', '.txt', '')
-    if ($textExts -contains $f.Extension.ToLower()) {
+    $binaryExts = @('.sig', '.png', '.ico', '.zip', '.exe', '.dll')
+    if ($binaryExts -notcontains $f.Extension.ToLower()) {
         try {
             $raw = [System.IO.File]::ReadAllText($f.FullName)
             $normalized = $raw -replace "`r`n", "`n"
             $size = [System.Text.Encoding]::UTF8.GetByteCount($normalized)
-            $lineCount = ($normalized -split "`n").Count
+            # Empty files: split produces @('') with Count=1; treat as no lines.
+            if ($normalized.Length -gt 0) {
+                $lineCount = ($normalized -split "`n").Count
+            }
         } catch {
             $lineCount = $null
         }

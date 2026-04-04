@@ -7,15 +7,15 @@
 | Metric | Value |
 |---|---|
 | Files | 38 |
-| PowerShell | 23 files, 6,129 lines |
+| PowerShell | 23 files, 6,135 lines |
 | Total size | 278 KB |
 
 ## Files
 
 | Path | Lines | Size | Purpose |
 |---|---|---|---|
-| `.gitattributes` | -- | 472 B | -- |
-| `.gitignore` | -- | 211 B | Git ignore rules for binaries, logs, and state |
+| `.gitattributes` | 17 | 472 B | -- |
+| `.gitignore` | 11 | 201 B | Git ignore rules for binaries, logs, and state |
 | `bootstrap.ps1` | 235 | 10.3 KB | Sets up scheduled tasks, state file, launches monitor + orchestrator |
 | `CLAUDE.md` | 169 | 7.4 KB | AI-assisted development context and conventions |
 | `INDEX.md` | 64 | 3.9 KB | Auto-generated file inventory (this file) |
@@ -30,7 +30,7 @@
 | `.githooks/pre-commit` | 7 | 287 B | Git pre-commit shim -- calls pre-commit.ps1 |
 | `.githooks/pre-commit.ps1` | 39 | 894 B | Pre-commit hook logic -- regenerates and stages INDEX.md |
 | | | | |
-| `.github/workflows/ci.yml` | 201 | 8.1 KB | CI pipeline: lint, validate tasks, sign manifest (sequential) |
+| `.github/workflows/ci.yml` | 198 | 7.9 KB | CI pipeline: lint, validate tasks, sign manifest (sequential) |
 | | | | |
 | `apps/.gitkeep` | -- | 0 B | Placeholder -- apps/ holds downloaded installers at runtime |
 | | | | |
@@ -59,5 +59,5 @@
 | | | | |
 | `docs/gpg-setup.md` | 144 | 3.2 KB | Instructions for generating GPG key pair for manifest signing |
 | | | | |
-| `tools/Update-Index.ps1` | 220 | 10.1 KB | Generates INDEX.md file inventory (this script) |
+| `tools/Update-Index.ps1` | 226 | 10.4 KB | Generates INDEX.md file inventory (this script) |
 
