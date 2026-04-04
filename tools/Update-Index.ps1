@@ -213,6 +213,9 @@ foreach ($e in $entries) {
 # ── Write output ────────────────────────────────────────────────────────────
 $outPath = Join-Path $RepoRoot 'INDEX.md'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($outPath, $sb.ToString(), $utf8NoBom)
+# StringBuilder.AppendLine uses CRLF on Windows; normalize to LF so the
+# output is identical on every platform and git diff stays clean.
+$content = $sb.ToString() -replace "`r`n", "`n"
+[System.IO.File]::WriteAllText($outPath, $content, $utf8NoBom)
 
 Write-Host "INDEX.md updated: $($entries.Count) files, $($totalPsLines.ToString('N0')) PS lines, $totalSizeStr total" -ForegroundColor Green
