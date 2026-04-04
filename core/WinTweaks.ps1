@@ -5,16 +5,20 @@
 
 .DESCRIPTION
     Two-pass approach:
-      Pass 1 — Run Chris Titus Tech WinUtil in unattended preset mode using
+      Pass 1 -- Run Chris Titus Tech WinUtil in unattended preset mode using
                config/winutil-preset.json. Wrapped in try/catch so a WinUtil
                failure doesn't abort the deployment.
-      Pass 2 — Apply specific tweaks directly via registry regardless of whether
+      Pass 2 -- Apply specific tweaks directly via registry regardless of whether
                WinUtil succeeded. These are always applied:
                  - Dark theme (system + apps)
                  - Remove Bing from taskbar search
                  - NumLock on at startup (default user + current user)
                  - Verbose status messages during login/startup
                  - Additional telemetry and noise reduction tweaks
+
+    Because the orchestrator runs as SYSTEM, HKCU points to the SYSTEM hive --
+    not the real user. Pass 2 therefore enumerates every real user profile and
+    loads their NTUSER.DAT so per-user tweaks actually reach the right accounts.
 #>
 
 [CmdletBinding()]
@@ -34,6 +38,13 @@ Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
 Initialize-Logger -Stage $StageName
 
 # ---------------------------------------------------------------------------
+# Script-level state for user hive management
+# ---------------------------------------------------------------------------
+$Script:UserHiveRoots   = @()   # Registry::HKU\<key> for each real user
+$Script:DefaultHiveRoot = $null # Registry::HKU\WinDeploy_Default
+$Script:LoadedHiveKeys  = @()   # Keys we loaded (must unload at end)
+
+# ---------------------------------------------------------------------------
 # Registry helper
 # ---------------------------------------------------------------------------
 function Set-Reg {
@@ -48,18 +59,100 @@ function Set-Reg {
         Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -ErrorAction Stop
         Write-LogInfo "  SET $Path\$Name = $Value"
     } catch {
-        Write-LogWarning "  SKIP $Path\$Name  — $($_.Exception.Message)"
+        Write-LogWarning "  SKIP $Path\$Name  -- $($_.Exception.Message)"
     }
+}
+
+# ---------------------------------------------------------------------------
+# User-hive mount / dismount
+# ---------------------------------------------------------------------------
+function Mount-AllUserHives {
+    <#
+    Enumerates real user profiles and loads their NTUSER.DAT into HKU so
+    per-user (HKCU) tweaks reach the correct accounts. Also loads the
+    default-user hive (template for future new profiles).
+    #>
+    Write-LogSection 'Mounting user hives'
+
+    $profileList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+    Get-ChildItem $profileList -ErrorAction SilentlyContinue | ForEach-Object {
+        $sid = $_.PSChildName
+        # Skip short SIDs -- these are system accounts (SYSTEM, LOCAL SERVICE, etc.)
+        if ($sid.Length -lt 20) { return }
+
+        $profilePath = (Get-ItemProperty $_.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
+        if (-not $profilePath -or -not (Test-Path $profilePath)) { return }
+
+        # If the user is logged in their hive is already in HKU under their SID
+        if (Test-Path "Registry::HKU\$sid") {
+            $Script:UserHiveRoots += "Registry::HKU\$sid"
+            Write-LogInfo "  User hive already loaded (logged-in): $profilePath"
+            return
+        }
+
+        # Offline user -- load their hive manually
+        $hivePath = Join-Path $profilePath 'NTUSER.DAT'
+        if (-not (Test-Path $hivePath)) { return }
+
+        $short   = $sid.Substring($sid.Length - 8)
+        $hiveKey = "WinDeploy_U_$short"
+        reg.exe load "HKU\$hiveKey" $hivePath 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $Script:UserHiveRoots  += "Registry::HKU\$hiveKey"
+            $Script:LoadedHiveKeys += $hiveKey
+            Write-LogInfo "  Loaded offline hive: $hiveKey ($profilePath)"
+        } else {
+            Write-LogWarning "  Could not load hive for $profilePath (exit $LASTEXITCODE)"
+        }
+    }
+
+    # Default-user hive (template for any profile created after deployment)
+    $defaultHive = 'C:\Users\Default\NTUSER.DAT'
+    if (Test-Path $defaultHive) {
+        reg.exe load 'HKU\WinDeploy_Default' $defaultHive 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $Script:DefaultHiveRoot = 'Registry::HKU\WinDeploy_Default'
+            $Script:LoadedHiveKeys += 'WinDeploy_Default'
+            Write-LogInfo '  Loaded default-user hive.'
+        } else {
+            Write-LogWarning "  Could not load default-user hive (exit $LASTEXITCODE)."
+        }
+    }
+
+    $total = $Script:UserHiveRoots.Count
+    if ($Script:DefaultHiveRoot) { $total++ }
+    Write-LogInfo "  Total hives to apply per-user tweaks: $total"
+}
+
+function Dismount-AllUserHives {
+    [gc]::Collect()
+    Start-Sleep -Milliseconds 200
+    foreach ($hiveKey in $Script:LoadedHiveKeys) {
+        [gc]::Collect()
+        reg.exe unload "HKU\$hiveKey" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-LogInfo "  Unloaded hive: $hiveKey"
+        } else {
+            Write-LogWarning "  Could not unload hive: $hiveKey (exit $LASTEXITCODE)"
+        }
+    }
+}
+
+function Get-AllUserRoots {
+    <# Returns every hive root that needs per-user tweaks: real users + default. #>
+    $roots = @() + $Script:UserHiveRoots
+    if ($Script:DefaultHiveRoot) { $roots += $Script:DefaultHiveRoot }
+    return $roots
 }
 
 # ---------------------------------------------------------------------------
 # Pass 1: WinUtil unattended preset
 # ---------------------------------------------------------------------------
-function Invoke-WinUtil {
+function Start-WinUtilPreset {
     $presetPath = Join-Path $repoRoot 'config\winutil-preset.json'
 
     if (-not (Test-Path $presetPath)) {
-        Write-LogWarning "WinUtil preset not found at '$presetPath' — skipping WinUtil pass."
+        Write-LogWarning "WinUtil preset not found at '$presetPath' -- skipping WinUtil pass."
         return
     }
 
@@ -90,47 +183,32 @@ function Invoke-WinUtil {
 
 function Set-DarkTheme {
     Write-LogSection 'Dark Theme'
-    # System-wide default (affects new users and login screen)
+    # Machine-wide (affects login screen)
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'AppsUseLightTheme'   0
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'SystemUsesLightTheme' 0
-    # Current user (Administrator during deployment; auto-logon user)
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'AppsUseLightTheme'   0
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'SystemUsesLightTheme' 0
-    # Default user hive (applies to every NEW user profile created later)
-    $defaultHive = 'C:\Users\Default\NTUSER.DAT'
-    if (Test-Path $defaultHive) {
-        try {
-            reg.exe load 'HKU\WinDeploy_Default' $defaultHive 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                Write-LogWarning "  Failed to load default user hive for dark theme (exit $LASTEXITCODE). Skipping."
-            } else {
-                Set-Reg 'Registry::HKU\WinDeploy_Default\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'AppsUseLightTheme'   0
-                Set-Reg 'Registry::HKU\WinDeploy_Default\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'SystemUsesLightTheme' 0
-                Write-LogInfo '  Default user hive updated for dark theme.'
-            }
-        } finally {
-            [gc]::Collect()
-            reg.exe unload 'HKU\WinDeploy_Default' 2>$null
-        }
+    # Every real user + default-user hive
+    foreach ($root in (Get-AllUserRoots)) {
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" 'AppsUseLightTheme'   0
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" 'SystemUsesLightTheme' 0
     }
 }
 
 function Remove-BingSearch {
     Write-LogSection 'Remove Bing Search'
-    # Disable web/Bing results in taskbar search
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search'             'BingSearchEnabled'       0
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search'             'CortanaConsent'          0
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search'             'SearchboxTaskbarMode'    1  # 0=hidden,1=icon,2=box
-    # Policy: disable connected/web search (applies machine-wide)
+    # Policy: machine-wide
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'           'DisableWebSearch'        1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'           'ConnectedSearchUseWeb'   0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'           'AllowCortana'            0
-    # Disable "Show search highlights" (the Bing-sourced daily content in search)
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings'     'IsDynamicSearchBoxEnabled' 0
+    # Per-user
+    foreach ($root in (Get-AllUserRoots)) {
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Search"             'BingSearchEnabled'       0
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Search"             'CortanaConsent'          0
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Search"             'SearchboxTaskbarMode'    1
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\SearchSettings"     'IsDynamicSearchBoxEnabled' 0
+    }
 }
 
 function Set-NumLockOn {
-    # Check config for NumLock setting
     $numLockEnabled = $true
     if ($Config['WinTweaks'] -and $Config['WinTweaks']['NumLockOnStartup'] -eq $false) {
         $numLockEnabled = $false
@@ -142,34 +220,17 @@ function Set-NumLockOn {
     }
 
     Write-LogSection 'NumLock on at startup'
-    # HKU\.DEFAULT = affects the login screen and any user who hasn't changed it
+    # .DEFAULT hive = login screen
     Set-Reg 'Registry::HKU\.DEFAULT\Control Panel\Keyboard' 'InitialKeyboardIndicators' '2' String
-    # Current user
-    Set-Reg 'HKCU:\Control Panel\Keyboard'                  'InitialKeyboardIndicators' '2' String
-    # Default user hive
-    $defaultHive = 'C:\Users\Default\NTUSER.DAT'
-    if (Test-Path $defaultHive) {
-        try {
-            reg.exe load 'HKU\WinDeploy_Default' $defaultHive 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                Write-LogWarning "  Failed to load default user hive for NumLock (exit $LASTEXITCODE). Skipping."
-            } else {
-                Set-Reg 'Registry::HKU\WinDeploy_Default\Control Panel\Keyboard' 'InitialKeyboardIndicators' '2' String
-                Write-LogInfo '  Default user hive updated for NumLock.'
-            }
-        } finally {
-            [gc]::Collect()
-            reg.exe unload 'HKU\WinDeploy_Default' 2>$null
-        }
+    # Every real user + default-user hive
+    foreach ($root in (Get-AllUserRoots)) {
+        Set-Reg "$root\Control Panel\Keyboard" 'InitialKeyboardIndicators' '2' String
     }
 }
 
 function Set-VerboseLogin {
     Write-LogSection 'Verbose login messages'
-    # Shows "Applying computer settings...", "Applying user settings..." etc. during login
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'VerboseStatus' 1
-    # Also increase the startup/shutdown verbosity in boot options (optional — comment out if not needed)
-    # bcdedit /set quietboot No  — handled separately via bcdedit below
     try {
         & bcdedit.exe /set '{current}' bootstatuspolicy DisplayAllFailures 2>$null | Out-Null
         Write-LogInfo '  bcdedit: boot status policy set to DisplayAllFailures'
@@ -179,57 +240,30 @@ function Set-VerboseLogin {
 }
 
 function Set-DisplayScale {
-    <#
-    Sets display scaling to 100% (96 DPI) for the current user and the
-    default user hive so it applies to any new user profile created later.
-
-    Windows DPI values:
-      96  = 100%  |  120 = 125%  |  144 = 150%  |  192 = 200%
-
-    Change takes effect after the next logoff/reboot, which the deployment
-    already performs after WinTweaks completes.
-    #>
-    # Load display scale from config (percentage, default 100)
     $displayScale = 100
     if ($Config['WinTweaks'] -and $Config['WinTweaks']['DisplayScale']) {
         $displayScale = $Config['WinTweaks']['DisplayScale']
     }
     $dpi = [int](96 * $displayScale / 100)
 
-    Write-LogSection "Display scaling -> $displayScale% ($dpi DPI)"
+    Write-LogSection "Display scaling -> $displayScale% [$dpi DPI]"
 
-    # Current user
-    Set-Reg 'HKCU:\Control Panel\Desktop' 'LogPixels'      $dpi DWord
-    Set-Reg 'HKCU:\Control Panel\Desktop' 'Win8DpiScaling'  1 DWord
+    # Every real user + default-user hive
+    foreach ($root in (Get-AllUserRoots)) {
+        Set-Reg "$root\Control Panel\Desktop" 'LogPixels'      $dpi DWord
+        Set-Reg "$root\Control Panel\Desktop" 'Win8DpiScaling'  1 DWord
 
-    # Clear any per-monitor DPI overrides stored by Windows 11
-    $perMonitorKey = 'HKCU:\Control Panel\Desktop\PerMonitorSettings'
-    if (Test-Path $perMonitorKey) {
-        Get-ChildItem $perMonitorKey -ErrorAction SilentlyContinue | ForEach-Object {
-            Remove-ItemProperty -Path $_.PSPath -Name 'DpiValue' -ErrorAction SilentlyContinue
-        }
-        Write-LogInfo '  Cleared per-monitor DPI overrides.'
-    }
-
-    # Default user hive — applies to any new user profile created after deployment
-    $defaultHive = 'C:\Users\Default\NTUSER.DAT'
-    if (Test-Path $defaultHive) {
-        try {
-            & reg.exe load 'HKU\WinDeploy_DPI' $defaultHive 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                Write-LogWarning "  Failed to load default user hive for DPI (exit $LASTEXITCODE). Skipping."
-            } else {
-                Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'LogPixels'       $dpi DWord
-                Set-Reg 'Registry::HKU\WinDeploy_DPI\Control Panel\Desktop' 'Win8DpiScaling'   1 DWord
-                Write-LogInfo '  Default user hive updated for DPI.'
+        # Clear per-monitor DPI overrides (Windows 11)
+        $perMonitorKey = "$root\Control Panel\Desktop\PerMonitorSettings"
+        if (Test-Path $perMonitorKey) {
+            Get-ChildItem $perMonitorKey -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-ItemProperty -Path $_.PSPath -Name 'DpiValue' -ErrorAction SilentlyContinue
             }
-        } finally {
-            [gc]::Collect()
-            & reg.exe unload 'HKU\WinDeploy_DPI' 2>$null
+            Write-LogInfo "  Cleared per-monitor DPI overrides under $root."
         }
     }
 
-    Write-LogInfo "  Display scale set to $displayScale% ($dpi DPI). Takes effect after reboot."
+    Write-LogInfo "  Display scale set to $displayScale% [$dpi DPI]. Takes effect after reboot."
 }
 
 function Install-WingetApps {
@@ -238,7 +272,6 @@ function Install-WingetApps {
     # Resolve winget path - not on PATH when running as SYSTEM
     $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
     if (-not $wingetCmd) {
-        # Search WindowsApps for the winget executable
         $wingetPath = Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe' -ErrorAction SilentlyContinue |
                       Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
         if ($wingetPath) {
@@ -253,8 +286,7 @@ function Install-WingetApps {
         $wingetExe = 'winget.exe'
     }
 
-    # When running as SYSTEM, winget's UWP dependencies (VCLibs, UI.Xaml) are
-    # not on PATH, causing STATUS_DLL_NOT_FOUND (0xC0000135). Add them.
+    # When running as SYSTEM, winget's UWP dependencies are not on PATH
     $depDirs = @(
         Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.VCLibs.140.00.UWPDesktop_*_x64__8wekyb3d8bbwe' -Directory -ErrorAction SilentlyContinue |
             Sort-Object Name -Descending | Select-Object -First 1
@@ -304,7 +336,6 @@ function Install-WingetApps {
                 2>&1
 
             if ($LASTEXITCODE -in @(0, -1978335189)) {
-                # 0 = success, -1978335189 (0x8A150011) = already installed
                 Write-LogSuccess "$($app.Name) installed (or already present)."
             } else {
                 Write-LogWarning "$($app.Name) winget exit code: $LASTEXITCODE"
@@ -318,34 +349,30 @@ function Install-WingetApps {
 function Set-AdditionalTweaks {
     Write-LogSection 'Additional tweaks'
 
-    # Disable telemetry
+    # Machine-wide tweaks (HKLM)
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection' 'AllowTelemetry'           0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'                'AllowTelemetry'           0
-
-    # Disable activity history
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'EnableActivityFeed'          0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'PublishUserActivities'       0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'UploadUserActivities'        0
-
-    # Disable location tracking
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location' 'Value' 'Deny' String
-
-    # Show file extensions in Explorer
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'HideFileExt'        0
-    # Show hidden files
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'Hidden'             1
-    # Disable "Recently used files" in Quick Access
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer'          'ShowRecent'         0
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer'          'ShowFrequent'       0
-
-    # Disable Xbox Game DVR / Game Bar
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' 'AllowGameDVR' 0
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\GameBar'                   'AutoGameModeEnabled' 0
-
-    # Disable fast startup (can cause issues with dual-boot and some hardware)
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0
+    Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' 'RealTimeIsUniversal' 1
+    Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
 
-    # Set timezone (configurable via settings.json)
+    # Per-user tweaks
+    foreach ($root in (Get-AllUserRoots)) {
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" 'HideFileExt'        0
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" 'Hidden'             1
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer"          'ShowRecent'         0
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer"          'ShowFrequent'       0
+        Set-Reg "$root\SOFTWARE\Microsoft\GameBar"                                   'AutoGameModeEnabled' 0
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" 'ShowSecondsInSystemClock' 1
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" 'TaskbarEndTask' 1
+    }
+
+    # Timezone
     $timezone = 'Eastern Standard Time'
     if ($Config['WinTweaks'] -and $Config['WinTweaks']['Timezone']) {
         $timezone = $Config['WinTweaks']['Timezone']
@@ -356,18 +383,6 @@ function Set-AdditionalTweaks {
     } catch {
         Write-LogWarning "  tzutil failed: $($_.Exception.Message)"
     }
-
-    # Set UTC time (important for dual-boot / VMs)
-    Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' 'RealTimeIsUniversal' 1
-
-    # Taskbar: show seconds in clock
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowSecondsInSystemClock' 1
-
-    # Disable Widgets (Windows 11)
-    Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
-
-    # End task from taskbar right-click (Windows 11 22H2+)
-    Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings' 'TaskbarEndTask' 1
 }
 
 # ---------------------------------------------------------------------------
@@ -383,21 +398,26 @@ try {
 
     if ($runWinUtil) {
         Write-LogSection 'Pass 1: WinUtil preset'
-        try { Invoke-WinUtil } catch { Write-LogWarning "WinUtil pass threw: $($_.Exception.Message)" }
+        try { Start-WinUtilPreset } catch { Write-LogWarning "WinUtil pass threw: $($_.Exception.Message)" }
     } else {
         Write-LogInfo 'WinUtil pass skipped (RunWinUtil = false in config).'
     }
 
-    # Pass 2: Direct tweaks
+    # Pass 2: Direct tweaks -- mount all user hives first
     Write-LogSection 'Pass 2: Direct registry tweaks'
-    Set-DarkTheme
-    Remove-BingSearch
-    Set-NumLockOn
-    Set-VerboseLogin
-    Set-DisplayScale
-    Set-AdditionalTweaks
+    Mount-AllUserHives
+    try {
+        Set-DarkTheme
+        Remove-BingSearch
+        Set-NumLockOn
+        Set-VerboseLogin
+        Set-DisplayScale
+        Set-AdditionalTweaks
+    } finally {
+        Dismount-AllUserHives
+    }
 
-    # Winget app installs
+    # Winget app installs (no hive dependency)
     Install-WingetApps
 
     Write-LogSuccess 'WinTweaks stage complete.'

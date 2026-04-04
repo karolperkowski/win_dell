@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 38 |
-| PowerShell | 23 files, 6,136 lines |
-| Total size | 278 KB |
+| PowerShell | 23 files, 6,156 lines |
+| Total size | 275 KB |
 
 ## Files
 
@@ -17,7 +17,7 @@
 | `.gitattributes` | 17 | 472 B | -- |
 | `.gitignore` | 11 | 201 B | Git ignore rules for binaries, logs, and state |
 | `bootstrap.ps1` | 235 | 10.3 KB | Sets up scheduled tasks, state file, launches monitor + orchestrator |
-| `CLAUDE.md` | 169 | 7.4 KB | AI-assisted development context and conventions |
+| `CLAUDE.md` | 80 | 3.1 KB | AI-assisted development context and conventions |
 | `INDEX.md` | 64 | 3.9 KB | Auto-generated file inventory (this file) |
 | `install.ps1` | 438 | 18.3 KB | irm|iex entry point -- downloads repo, verifies manifest, launches bootstrap |
 | `lint.ps1` | 500 | 22.6 KB | PSScriptAnalyzer + custom PS 5.1 / task / path / state checks |
@@ -52,7 +52,7 @@
 | `core/State.psm1` | 480 | 14.6 KB | State.json read/write, reboot counter, stage tracking |
 | `core/Tailscale.ps1` | 371 | 14.0 KB | Stage 6: Tailscale install + QR-based registration |
 | `core/WindowsUpdate.ps1` | 281 | 10.5 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
-| `core/WinTweaks.ps1` | 412 | 17.4 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
+| `core/WinTweaks.ps1` | 432 | 17.8 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
 | | | | |
 | `data/bloatware.json` | 81 | 2.3 KB | Safe and optional app removal lists for Debloat stage |
 | `data/profiles.json` | 18 | 606 B | Deployment profile definitions |
