@@ -118,20 +118,23 @@ $totalSize = 0
 
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($RepoRoot.Length + 1).Replace('\', '/')
-    $size = $f.Length
-    $totalSize += $size
 
-    # Line count for text files
+    # Line count for text files; also compute LF-normalized size for consistency
+    # across platforms (CRLF on Windows vs LF on CI/Linux).
     $lineCount = $null
+    $size = $f.Length
     $textExts = @('.ps1', '.psm1', '.json', '.yml', '.yaml', '.md', '.txt', '')
     if ($textExts -contains $f.Extension.ToLower()) {
         try {
-            $content = [System.IO.File]::ReadAllLines($f.FullName)
-            $lineCount = $content.Count
+            $raw = [System.IO.File]::ReadAllText($f.FullName)
+            $normalized = $raw -replace "`r`n", "`n"
+            $size = [System.Text.Encoding]::UTF8.GetByteCount($normalized)
+            $lineCount = ($normalized -split "`n").Count
         } catch {
             $lineCount = $null
         }
     }
+    $totalSize += $size
 
     if ($f.Extension -in @('.ps1', '.psm1')) {
         $psFileCount++
