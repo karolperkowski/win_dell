@@ -177,7 +177,7 @@ jobs:
           $env:GPG_PRIVATE_KEY | gpg --batch --import
           if ($LASTEXITCODE -ne 0) { throw 'GPG key import failed' }
 
-          echo $env:GPG_PASSPHRASE | gpg --batch --yes --passphrase-fd 0 --armor --detach-sign manifest.json
+          echo $env:GPG_PASSPHRASE | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign manifest.json
           if ($LASTEXITCODE -ne 0) { throw 'GPG signing failed' }
 
           Move-Item manifest.json.asc manifest.sig -Force
