@@ -38,6 +38,9 @@ jobs:
         shell: powershell
         run: |
           & powershell.exe -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\tools\Update-Index.ps1" -RepoRoot "$env:GITHUB_WORKSPACE"
+          Write-Host "CWD: $(Get-Location)"
+          Write-Host "git diff stat:"; git diff --stat INDEX.md
+          Write-Host "git diff (first 60 lines):"; git diff INDEX.md | Select-Object -First 60
           $diff = git diff --name-only INDEX.md
           if ($diff) {
             Write-Error "INDEX.md is out of date. Run 'tools\Update-Index.ps1' locally or enable the pre-commit hook via: git config core.hooksPath .githooks"
