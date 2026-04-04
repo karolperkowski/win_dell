@@ -7,7 +7,7 @@
 | Metric | Value |
 |---|---|
 | Files | 38 |
-| PowerShell | 23 files, 6,156 lines |
+| PowerShell | 23 files, 6,166 lines |
 | Total size | 275 KB |
 
 ## Files
@@ -25,7 +25,7 @@
 | `manifest.sig` | -- | 833 B | GPG detached signature of manifest.json |
 | `README.md` | 221 | 9.1 KB | Project overview and usage documentation |
 | `reinstall.ps1` | 59 | 2.6 KB | WinDeploy reinstall — clean uninstall + fresh install in one step. |
-| `uninstall.ps1` | 368 | 14.8 KB | Removes all WinDeploy components (force-kills processes first) |
+| `uninstall.ps1` | 378 | 15.2 KB | Removes all WinDeploy components (force-kills processes first) |
 | | | | |
 | `.githooks/pre-commit` | 7 | 287 B | Git pre-commit shim -- calls pre-commit.ps1 |
 | `.githooks/pre-commit.ps1` | 39 | 894 B | Pre-commit hook logic -- regenerates and stages INDEX.md |

@@ -205,18 +205,28 @@ Write-UninstallLog '--- Killing remaining processes ---'
 $patterns   = @('Orchestrator.ps1','Monitor.ps1','Notify.ps1','Watchdog',
                  'launch_resume','launch_monitor','launch_notify','WinDeploy')
 $killed     = $false
+$myPid      = $PID
+$parentPids = @($myPid)
+# Walk up the process tree so we never kill our own ancestor chain
+try {
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $myPid" -ErrorAction SilentlyContinue
+    while ($p -and $p.ParentProcessId) {
+        $parentPids += $p.ParentProcessId
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($p.ParentProcessId)" -ErrorAction SilentlyContinue
+    }
+} catch { <# non-fatal #> }
 
 # Check both powershell.exe and pwsh.exe
 foreach ($exeName in @('powershell.exe', 'pwsh.exe')) {
     Get-CimInstance Win32_Process -Filter "Name = '$exeName'" | ForEach-Object {
         $proc = $_
+        if ($proc.ProcessId -in $parentPids) { return }
         $cmd  = $proc.CommandLine
         if (-not $cmd) { return }
         foreach ($p in $patterns) {
             if ($cmd -like "*$p*") {
                 Write-UninstallLog "  Killing PID $($proc.ProcessId) ($exeName): $($cmd.Substring(0,[Math]::Min(80,$cmd.Length)))..." WARN
-                # /T kills the entire process tree (child processes too)
-                & taskkill.exe /F /PID $proc.ProcessId /T 2>$null | Out-Null
+                & taskkill.exe /F /PID $proc.ProcessId 2>$null | Out-Null
                 if ($LASTEXITCODE -ne 0) {
                     # fallback
                     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
