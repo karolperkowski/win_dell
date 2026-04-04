@@ -7,7 +7,7 @@ param(
     [string]$RepoRoot
 )
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 
 if (-not $RepoRoot) {
     $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -26,9 +26,7 @@ try {
     Push-Location $RepoRoot
     $diff = & git diff --name-only -- INDEX.md 2>$null
     if ($diff) {
-        # Suppress stderr (CRLF warnings) so PS 5.1 $ErrorActionPreference=Stop
-        # does not treat git's informational warnings as terminating errors.
-        & git add INDEX.md 2>&1 | Out-Null
+        & git add INDEX.md 2>$null
         Write-Host 'pre-commit: INDEX.md updated and staged.'
     }
     Pop-Location
