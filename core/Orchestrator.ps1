@@ -93,6 +93,7 @@ $Script:STAGE_SCRIPTS = [ordered]@{
     WinTweaks                = Join-Path $Script:CoreDir 'WinTweaks.ps1'
     InstallDellSupportAssist = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallDellPowerManager  = Join-Path $Script:CoreDir 'AppInstall.ps1'
+    InstallRustDesk          = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallTailscale         = Join-Path $Script:CoreDir 'Tailscale.ps1'
     WindowsUpdate            = Join-Path $Script:CoreDir 'WindowsUpdate.ps1'
     Cleanup                  = Join-Path $Script:CoreDir 'Cleanup.ps1'
@@ -178,6 +179,13 @@ function Test-StagePrerequisites {
             }
             if ((-not $hasInternet) -and (-not $hasLocal)) {
                 return 'No internet (dl.dell.com) and no local installer found for Dell Power Manager'
+            }
+        }
+        'InstallRustDesk' {
+            try {
+                $null = [System.Net.Dns]::GetHostAddresses('github.com')
+            } catch {
+                return 'Cannot resolve github.com - RustDesk winget source unreachable'
             }
         }
     }

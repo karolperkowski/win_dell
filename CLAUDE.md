@@ -66,7 +66,7 @@ Scripts that run before Config loads (bootstrap, install, uninstall, Resilience 
 
 ## Stage pipeline order
 
-`PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallTailscale > WindowsUpdate > Cleanup`
+`PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > WindowsUpdate > Cleanup`
 
 WindowsUpdate runs **last** because it takes the longest and requires multiple reboots.
 

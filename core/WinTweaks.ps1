@@ -166,11 +166,25 @@ function Start-WinUtilPreset {
             -OutFile $winUtilScript -UseBasicParsing -ErrorAction Stop
 
         Write-LogInfo "Running WinUtil with preset: $presetPath"
-        $argList = "-NonInteractive -ExecutionPolicy Bypass -File `"$winUtilScript`" " +
+        $argList = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$winUtilScript`" " +
                    "-Config `"$presetPath`" -Run"
 
-        $proc = Start-Process powershell.exe -ArgumentList $argList -Wait -PassThru
-        Write-LogInfo "WinUtil exited with code: $($proc.ExitCode)"
+        $proc = Start-Process powershell.exe `
+            -ArgumentList $argList `
+            -WindowStyle Hidden `
+            -PassThru `
+            -ErrorAction Stop
+
+        # WinUtil can hang indefinitely when run as SYSTEM (WPF/GUI init with no
+        # desktop session). Hard-kill after 20 minutes so the stage doesn't stall.
+        $timeoutMs = 20 * 60 * 1000
+        $finished  = $proc.WaitForExit($timeoutMs)
+        if (-not $finished) {
+            Write-LogWarning 'WinUtil exceeded 20-minute timeout - killing process.'
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        } else {
+            Write-LogInfo "WinUtil exited with code: $($proc.ExitCode)"
+        }
     } catch {
         Write-LogWarning "WinUtil run failed: $($_.Exception.Message)"
         Write-LogWarning 'Continuing with direct registry tweaks.'

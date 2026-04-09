@@ -18,7 +18,7 @@
     },
     "WinTweaks": {
       "ContinueOnError": true,
-      "RunWinUtil": true,
+      "RunWinUtil": false,
       "TimeoutMinutes": 60,
       "Timezone": "Eastern Standard Time",
       "DisplayScale": 100,
@@ -32,6 +32,10 @@
     "InstallDellPowerManager": {
       "ContinueOnError": true,
       "TimeoutMinutes": 60
+    },
+    "InstallRustDesk": {
+      "ContinueOnError": true,
+      "TimeoutMinutes": 30
     },
     "InstallTailscale": {
       "ContinueOnError": false,
@@ -72,6 +76,20 @@
         "Method": "Registry",
         "DisplayName": "Dell SupportAssist",
         "MinVersion": "3.0.0"
+      }
+    },
+
+    "InstallRustDesk": {
+      "DisplayName": "RustDesk",
+
+      "_comment_InstallerType": "WINGET uses winget.exe - no local file needed.",
+      "InstallerType": "WINGET",
+      "WingetId": "RustDesk.RustDesk",
+
+      "Detection": {
+        "_comment": "Method: Registry | File | Service",
+        "Method": "Registry",
+        "DisplayName": "RustDesk"
       }
     },
 

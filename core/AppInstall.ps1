@@ -4,19 +4,21 @@
     WinDeploy Stage: Application Installation
 
 .DESCRIPTION
-    Handles silent installation of Dell SupportAssist and Dell Power Manager
-    (and any other apps listed in config). Called twice by the orchestrator
-    with different -StageName values:
+    Handles silent installation of Dell SupportAssist, Dell Power Manager,
+    RustDesk, and any other apps listed in config. Called once per app stage
+    by the orchestrator with different -StageName values:
 
         - InstallDellSupportAssist
         - InstallDellPowerManager
+        - InstallRustDesk
 
     Each invocation processes the matching app definition from settings.json.
 
-    App definitions support three installer types:
-        EXE  - run with silent args, check exit code
-        MSI  - run via msiexec.exe, standard return codes
-        MSIX - use Add-AppxPackage
+    App definitions support four installer types:
+        EXE    - run with silent args, check exit code
+        MSI    - run via msiexec.exe, standard return codes
+        MSIX   - use Add-AppxPackage
+        WINGET - use winget.exe with --silent (requires WingetId field)
 
     Detection methods supported:
         Registry - check HKLM/HKCU Uninstall keys
@@ -221,17 +223,78 @@ function Invoke-MSIXInstall {
     Write-LogSuccess 'MSIX package added.'
 }
 
+function Find-WingetExe {
+    <#
+    Resolves the winget executable and patches $env:PATH with the UWP
+    dependency DLLs required when running as SYSTEM (STATUS_DLL_NOT_FOUND).
+    Returns the path to winget.exe, or 'winget.exe' if already on PATH.
+    #>
+    $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($wingetCmd) { return 'winget.exe' }
+
+    $wingetPath = Get-ChildItem `
+        'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe' `
+        -ErrorAction SilentlyContinue |
+        Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
+
+    if (-not $wingetPath) {
+        throw 'winget not found. winget ships with App Installer from the Microsoft Store.'
+    }
+
+    $depDirs = @(
+        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.VCLibs.140.00.UWPDesktop_*_x64__8wekyb3d8bbwe' `
+            -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.UI.Xaml.2.8_*_x64__8wekyb3d8bbwe' `
+            -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+    ) | Where-Object { $_ }
+
+    if ($depDirs) {
+        $extraPaths = ($depDirs | ForEach-Object { $_.FullName }) -join ';'
+        $env:PATH   = "$extraPaths;$env:PATH"
+        Write-LogInfo "Added winget dependency paths: $extraPaths"
+    }
+
+    Write-LogInfo "winget found at: $($wingetPath.FullName)"
+    return $wingetPath.FullName
+}
+
+function Invoke-WingetInstall {
+    param([string]$PackageId)
+
+    $wingetExe = Find-WingetExe
+    Write-LogInfo "Installing '$PackageId' via winget..."
+    & $wingetExe install `
+        --id $PackageId `
+        --silent `
+        --accept-package-agreements `
+        --accept-source-agreements `
+        --disable-interactivity `
+        2>&1
+
+    if ($LASTEXITCODE -in @(0, -1978335189)) {
+        # 0 = success, -1978335189 (0x8A15002B) = already installed
+        Write-LogSuccess "winget install '$PackageId' succeeded (exit $LASTEXITCODE)."
+    } else {
+        throw "winget install '$PackageId' failed (exit $LASTEXITCODE)."
+    }
+}
+
 function Install-App {
     param([hashtable]$AppDef)
 
     $displayName = $AppDef['DisplayName']
-    $type        = $AppDef['InstallerType']   # EXE | MSI | MSIX
+    $type        = $AppDef['InstallerType']   # EXE | MSI | MSIX | WINGET
     $silentArgs = ''
     if ($AppDef['SilentArgs']) { $silentArgs = $AppDef['SilentArgs'] }
     $successCodes = @(0)
     if ($AppDef['SuccessExitCodes']) { $successCodes = @($AppDef['SuccessExitCodes']) }
 
-    $installerPath = Resolve-InstallerPath -AppDef $AppDef
+    $installerPath = ''
+    if ($type.ToUpper() -ne 'WINGET') {
+        $installerPath = Resolve-InstallerPath -AppDef $AppDef
+    }
 
     switch ($type.ToUpper()) {
         'EXE'  {
@@ -247,6 +310,14 @@ function Install-App {
         }
         'MSIX' {
             Invoke-MSIXInstall -InstallerPath $installerPath
+            return $false
+        }
+        'WINGET' {
+            $packageId = $AppDef['WingetId']
+            if (-not $packageId) {
+                throw "InstallerType WINGET requires 'WingetId' in the app definition for '$displayName'."
+            }
+            Invoke-WingetInstall -PackageId $packageId
             return $false
         }
         default {
