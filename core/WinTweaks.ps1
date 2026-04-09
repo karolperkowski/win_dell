@@ -38,6 +38,209 @@ Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
 Initialize-Logger -Stage $StageName
 
 # ---------------------------------------------------------------------------
+# Win32 helper: launch a process in the logged-in user's desktop session
+# ---------------------------------------------------------------------------
+# When running as SYSTEM we have no desktop. To show WinUtil's GUI on the
+# real user's screen we must: get the console session → query the user token
+# → obtain the linked elevated token (UAC) → CreateProcessAsUser targeting
+# winsta0\Default.  Falls back gracefully if no user is logged in.
+
+if (-not ('WinDeploy.SessionLauncher' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace WinDeploy
+{
+    public class SessionLauncher
+    {
+        // --- kernel32 ---
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint WTSGetActiveConsoleSessionId();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr h);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint WaitForSingleObject(IntPtr h, uint ms);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+
+        // --- wtsapi32 ---
+        [DllImport("wtsapi32.dll", SetLastError = true)]
+        public static extern bool WTSQueryUserToken(uint sessionId, out IntPtr token);
+
+        // --- advapi32 ---
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool DuplicateTokenEx(
+            IntPtr hToken, uint access, IntPtr sa,
+            int impersonation, int tokenType, out IntPtr newToken);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool GetTokenInformation(
+            IntPtr token, int infoClass, out IntPtr info, int len, out int retLen);
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateProcessAsUserW(
+            IntPtr hToken, string app, string cmdLine,
+            IntPtr procAttr, IntPtr threadAttr, bool inherit,
+            uint flags, IntPtr env, string cwd,
+            ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+
+        // --- userenv ---
+        [DllImport("userenv.dll", SetLastError = true)]
+        public static extern bool CreateEnvironmentBlock(out IntPtr env, IntPtr token, bool inherit);
+
+        [DllImport("userenv.dll")]
+        public static extern bool DestroyEnvironmentBlock(IntPtr env);
+
+        // --- structs ---
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct STARTUPINFO
+        {
+            public int    cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public int dwX, dwY, dwXSize, dwYSize;
+            public int dwXCountChars, dwYCountChars, dwFillAttribute;
+            public int    dwFlags;
+            public short  wShowWindow;
+            public short  cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput, hStdOutput, hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public uint   dwProcessId;
+            public uint   dwThreadId;
+        }
+
+        // --- constants ---
+        public const uint TOKEN_ALL  = 0x000F01FF;
+        public const int  SecurityImpersonation = 2;
+        public const int  TokenPrimary = 1;
+        public const int  TokenLinkedToken = 19;
+        public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+        public const uint WAIT_TIMEOUT  = 0x00000102;
+        public const uint WAIT_OBJECT_0 = 0x00000000;
+
+        /// <summary>
+        /// Launch a command line on the active console user's desktop.
+        /// Returns process handle + PID, or IntPtr.Zero if no user session.
+        /// </summary>
+        public static IntPtr Launch(string cmdLine, out uint pid)
+        {
+            pid = 0;
+            uint sid = WTSGetActiveConsoleSessionId();
+            if (sid == 0xFFFFFFFF) return IntPtr.Zero;   // no session
+
+            IntPtr userToken;
+            if (!WTSQueryUserToken(sid, out userToken))
+                return IntPtr.Zero;
+
+            // Try to get the linked elevated token (UAC).
+            IntPtr elevated = IntPtr.Zero;
+            IntPtr linkedRaw;
+            int    retLen;
+            if (GetTokenInformation(userToken, TokenLinkedToken,
+                    out linkedRaw, IntPtr.Size, out retLen))
+            {
+                // linkedRaw IS the elevated token handle
+                elevated = linkedRaw;
+            }
+
+            // If we got an elevated token, duplicate it as a primary token.
+            // Otherwise fall back to the original user token.
+            IntPtr launchToken;
+            if (elevated != IntPtr.Zero)
+            {
+                if (!DuplicateTokenEx(elevated, TOKEN_ALL, IntPtr.Zero,
+                        SecurityImpersonation, TokenPrimary, out launchToken))
+                {
+                    launchToken = userToken;  // fallback
+                }
+                CloseHandle(elevated);
+            }
+            else
+            {
+                DuplicateTokenEx(userToken, TOKEN_ALL, IntPtr.Zero,
+                    SecurityImpersonation, TokenPrimary, out launchToken);
+            }
+
+            // Build environment block for the user
+            IntPtr env;
+            CreateEnvironmentBlock(out env, launchToken, false);
+
+            var si = new STARTUPINFO();
+            si.cb        = Marshal.SizeOf(si);
+            si.lpDesktop = "winsta0\\default";
+
+            PROCESS_INFORMATION pi;
+            bool ok = CreateProcessAsUserW(
+                launchToken, null, cmdLine,
+                IntPtr.Zero, IntPtr.Zero, false,
+                CREATE_UNICODE_ENVIRONMENT, env, null,
+                ref si, out pi);
+
+            // Cleanup
+            if (env != IntPtr.Zero) DestroyEnvironmentBlock(env);
+            CloseHandle(launchToken);
+            CloseHandle(userToken);
+
+            if (!ok) return IntPtr.Zero;
+
+            pid = pi.dwProcessId;
+            CloseHandle(pi.hThread);
+            return pi.hProcess;   // caller must close after waiting
+        }
+    }
+}
+'@
+}
+
+function Start-ProcessInUserSession {
+    <#
+    Launches a command in the logged-in user's desktop session (visible GUI).
+    Returns $true if the process ran and exited within the timeout.
+    When no interactive user is logged in, returns $null (caller should fall back).
+    #>
+    param(
+        [string]$CommandLine,
+        [int]$TimeoutMs = 1200000   # 20 minutes
+    )
+
+    $pid2 = [uint32]0
+    $hProc = [WinDeploy.SessionLauncher]::Launch($CommandLine, [ref]$pid2)
+
+    if ($hProc -eq [IntPtr]::Zero) {
+        Write-LogWarning 'No interactive user session found - cannot launch GUI process.'
+        return $null
+    }
+
+    Write-LogInfo "Launched PID $pid2 in user session."
+
+    $waitResult = [WinDeploy.SessionLauncher]::WaitForSingleObject($hProc, [uint32]$TimeoutMs)
+    if ($waitResult -eq [WinDeploy.SessionLauncher]::WAIT_TIMEOUT) {
+        Write-LogWarning "Process $pid2 exceeded timeout - killing."
+        try { Stop-Process -Id $pid2 -Force -ErrorAction SilentlyContinue } catch {}
+        [WinDeploy.SessionLauncher]::CloseHandle($hProc) | Out-Null
+        return $false
+    }
+
+    $exitCode = [uint32]0
+    [WinDeploy.SessionLauncher]::GetExitCodeProcess($hProc, [ref]$exitCode) | Out-Null
+    [WinDeploy.SessionLauncher]::CloseHandle($hProc) | Out-Null
+    Write-LogInfo "Process exited with code $exitCode."
+    return $true
+}
+
+# ---------------------------------------------------------------------------
 # Script-level state for user hive management
 # ---------------------------------------------------------------------------
 $Script:UserHiveRoots   = @()   # Registry::HKU\<key> for each real user
@@ -156,32 +359,40 @@ function Start-WinUtilPreset {
         return
     }
 
-    Write-LogInfo 'Running WinUtil in headless mode with preset...'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $timeoutMs = 20 * 60 * 1000
+
+    # Build command: official iex invocation with -Config/-Run.
+    $iexCmd = "& ([ScriptBlock]::Create((irm ''https://christitus.com/win''))) " +
+              "-Config ''$presetPath'' -Run"
+    $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"$iexCmd`""
 
     try {
-        # Use the official iex invocation with -Noui to skip WPF entirely.
-        # This is required when running as SYSTEM (no interactive desktop).
-        $cmd = "& ([ScriptBlock]::Create((irm 'https://christitus.com/win'))) " +
-               "-Config '$presetPath' -Run -Noui"
+        # Try launching in the logged-in user's session so the WinUtil
+        # GUI is visible on the desktop.
+        Write-LogInfo 'Attempting to launch WinUtil in user desktop session...'
+        $result = Start-ProcessInUserSession -CommandLine $cmdLine -TimeoutMs $timeoutMs
 
-        $argList = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"$cmd`""
+        if ($null -eq $result) {
+            # No interactive session — fall back to headless -Noui mode.
+            Write-LogInfo 'Falling back to headless (-Noui) mode.'
+            $noUiCmd = "& ([ScriptBlock]::Create((irm 'https://christitus.com/win'))) " +
+                       "-Config '$presetPath' -Run -Noui"
+            $argList = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"$noUiCmd`""
 
-        Write-LogInfo "Launching: powershell.exe $argList"
-        $proc = Start-Process powershell.exe `
-            -ArgumentList $argList `
-            -WindowStyle Hidden `
-            -PassThru `
-            -ErrorAction Stop
+            $proc = Start-Process powershell.exe `
+                -ArgumentList $argList `
+                -WindowStyle Hidden `
+                -PassThru `
+                -ErrorAction Stop
 
-        # Safety net: hard-kill after 20 minutes if WinUtil stalls.
-        $timeoutMs = 20 * 60 * 1000
-        $finished  = $proc.WaitForExit($timeoutMs)
-        if (-not $finished) {
-            Write-LogWarning 'WinUtil exceeded 20-minute timeout - killing process.'
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-        } else {
-            Write-LogInfo "WinUtil exited with code: $($proc.ExitCode)"
+            $finished = $proc.WaitForExit($timeoutMs)
+            if (-not $finished) {
+                Write-LogWarning 'WinUtil (headless) exceeded 20-minute timeout - killing.'
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            } else {
+                Write-LogInfo "WinUtil (headless) exited with code: $($proc.ExitCode)"
+            }
         }
     } catch {
         Write-LogWarning "WinUtil run failed: $($_.Exception.Message)"
