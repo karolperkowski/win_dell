@@ -359,29 +359,44 @@ function Start-WinUtilPreset {
         return
     }
 
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $timeoutMs = 20 * 60 * 1000
 
-    # Build command: official iex invocation with -Config/-Run.
-    $iexCmd = "& ([ScriptBlock]::Create((irm ''https://christitus.com/win''))) " +
-              "-Config ''$presetPath'' -Run"
-    $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"$iexCmd`""
-
+    # Write a temp launcher script. Passing complex iex commands through
+    # CreateProcessAsUser's lpCommandLine mangles quote escaping; a file
+    # avoids that entirely and also lets us set TLS in the child process.
+    $tempScript = Join-Path $env:TEMP "windeploy_winutil_$([guid]::NewGuid().ToString('N')).ps1"
     try {
-        # Try launching in the logged-in user's session so the WinUtil
-        # GUI is visible on the desktop.
+        $scriptBody = @"
+`$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+& ([ScriptBlock]::Create((Invoke-RestMethod 'https://christitus.com/win'))) ``
+    -Config '$($presetPath -replace "'","''")' -Run
+"@
+        [System.IO.File]::WriteAllText($tempScript, $scriptBody,
+            [System.Text.Encoding]::UTF8)
+        Write-LogInfo "WinUtil launcher script: $tempScript"
+
+        $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$tempScript`""
+
+        # Try launching in the logged-in user's session so WinUtil GUI
+        # is visible on the desktop.
         Write-LogInfo 'Attempting to launch WinUtil in user desktop session...'
         $result = Start-ProcessInUserSession -CommandLine $cmdLine -TimeoutMs $timeoutMs
 
         if ($null -eq $result) {
             # No interactive session — fall back to headless -Noui mode.
-            Write-LogInfo 'Falling back to headless (-Noui) mode.'
-            $noUiCmd = "& ([ScriptBlock]::Create((irm 'https://christitus.com/win'))) " +
-                       "-Config '$presetPath' -Run -Noui"
-            $argList = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"$noUiCmd`""
+            Write-LogInfo 'No user session - falling back to headless (-Noui) mode.'
+            $noUiBody = @"
+`$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+& ([ScriptBlock]::Create((Invoke-RestMethod 'https://christitus.com/win'))) ``
+    -Config '$($presetPath -replace "'","''")' -Run -Noui
+"@
+            [System.IO.File]::WriteAllText($tempScript, $noUiBody,
+                [System.Text.Encoding]::UTF8)
 
             $proc = Start-Process powershell.exe `
-                -ArgumentList $argList `
+                -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$tempScript`"" `
                 -WindowStyle Hidden `
                 -PassThru `
                 -ErrorAction Stop
@@ -397,6 +412,8 @@ function Start-WinUtilPreset {
     } catch {
         Write-LogWarning "WinUtil run failed: $($_.Exception.Message)"
         Write-LogWarning 'Continuing with direct registry tweaks.'
+    } finally {
+        Remove-Item $tempScript -ErrorAction SilentlyContinue
     }
 }
 

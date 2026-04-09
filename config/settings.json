@@ -60,7 +60,7 @@
       "LocalPath": "DellSupportAssistInstaller.exe",
 
       "_comment_DownloadUrl": "Used as fallback if LocalPath is absent or missing.",
-      "DownloadUrl": "https://dl.dell.com/FOLDER12345678M/1/Dell-SupportAssist-for-Home-PCs_3.x.x_Setup.exe",
+      "DownloadUrl": "https://downloads.dell.com/serviceability/catalog/SupportAssistInstaller.exe",
 
       "_comment_InstallerType": "EXE | MSI | MSIX",
       "InstallerType": "EXE",
@@ -97,7 +97,7 @@
       "DisplayName": "Dell Power Manager",
 
       "LocalPath": "DellPowerManagerInstaller.exe",
-      "DownloadUrl": "https://dl.dell.com/FOLDER00000000M/1/Dell-Power-Manager_x.x.x_Setup.exe",
+      "DownloadUrl": "https://dl.dell.com/FOLDER12415414M/1/Dell-Power-Manager-Service_NJDXK_WIN64_3.17.0_A00.EXE",
 
       "InstallerType": "EXE",
 

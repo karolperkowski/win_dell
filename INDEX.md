@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 38 |
-| PowerShell | 23 files, 6,470 lines |
-| Total size | 287 KB |
+| PowerShell | 23 files, 6,487 lines |
+| Total size | 288 KB |
 
 ## Files
 
@@ -52,7 +52,7 @@
 | `core/State.psm1` | 480 | 14.6 KB | State.json read/write, reboot counter, stage tracking |
 | `core/Tailscale.ps1` | 371 | 14.0 KB | Stage 6: Tailscale install + QR-based registration |
 | `core/WindowsUpdate.ps1` | 281 | 10.5 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
-| `core/WinTweaks.ps1` | 655 | 26.3 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
+| `core/WinTweaks.ps1` | 672 | 27.0 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
 | | | | |
 | `data/bloatware.json` | 81 | 2.3 KB | Safe and optional app removal lists for Debloat stage |
 | `data/profiles.json` | 18 | 606 B | Deployment profile definitions |
