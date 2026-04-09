@@ -18,7 +18,7 @@
     },
     "WinTweaks": {
       "ContinueOnError": true,
-      "RunWinUtil": false,
+      "RunWinUtil": true,
       "TimeoutMinutes": 60,
       "Timezone": "Eastern Standard Time",
       "DisplayScale": 100,

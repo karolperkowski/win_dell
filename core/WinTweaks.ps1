@@ -156,27 +156,25 @@ function Start-WinUtilPreset {
         return
     }
 
-    Write-LogInfo 'Downloading WinUtil script...'
+    Write-LogInfo 'Running WinUtil in headless mode with preset...'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     try {
-        # Download the script to a temp file so we can call it with -Config/-Run
-        $winUtilScript = Join-Path $env:TEMP 'winutil.ps1'
-        Invoke-WebRequest -Uri 'https://christitus.com/win' `
-            -OutFile $winUtilScript -UseBasicParsing -ErrorAction Stop
+        # Use the official iex invocation with -Noui to skip WPF entirely.
+        # This is required when running as SYSTEM (no interactive desktop).
+        $cmd = "& ([ScriptBlock]::Create((irm 'https://christitus.com/win'))) " +
+               "-Config '$presetPath' -Run -Noui"
 
-        Write-LogInfo "Running WinUtil with preset: $presetPath"
-        $argList = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$winUtilScript`" " +
-                   "-Config `"$presetPath`" -Run"
+        $argList = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"$cmd`""
 
+        Write-LogInfo "Launching: powershell.exe $argList"
         $proc = Start-Process powershell.exe `
             -ArgumentList $argList `
             -WindowStyle Hidden `
             -PassThru `
             -ErrorAction Stop
 
-        # WinUtil can hang indefinitely when run as SYSTEM (WPF/GUI init with no
-        # desktop session). Hard-kill after 20 minutes so the stage doesn't stall.
+        # Safety net: hard-kill after 20 minutes if WinUtil stalls.
         $timeoutMs = 20 * 60 * 1000
         $finished  = $proc.WaitForExit($timeoutMs)
         if (-not $finished) {
