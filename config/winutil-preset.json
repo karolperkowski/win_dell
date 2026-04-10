@@ -1,24 +1,15 @@
-{
-  "_comment": "WinUtil preset for unattended deployment. Checkbox names match WinUtil's internal IDs.",
-  "_source": "https://github.com/christitustech/winutil",
-  "_usage": "Passed to WinUtil via: winutil.ps1 -Config winutil-preset.json -Run",
-
-  "WPFInstall": [],
-
-  "WPFTweaks": [
-    "WPFTweaksTele",
-    "WPFTweaksDVR",
-    "WPFTweaksUTC",
-    "WPFTweaksDeleteTemp",
-    "WPFTweaksEndTaskOnTaskbar",
-    "WPFTweaksHibernate",
-    "WPFTweaksServices",
-    "WPFTweaksIPv46",
-    "WPFTweaksDisableNotifications",
-    "WPFTweaksRemoveCopilot",
-    "WPFTweaksConsumerFeatures",
-    "WPFTweaksDisableMouseAcceleration"
-  ],
-
-  "WPFFeature": []
-}
+[
+  "WPFTweaksActivity",
+  "WPFTweaksConsumerFeatures",
+  "WPFTweaksDisableExplorerAutoDiscovery",
+  "WPFTweaksWPBT",
+  "WPFTweaksDVR",
+  "WPFTweaksLocation",
+  "WPFTweaksServices",
+  "WPFTweaksTelemetry",
+  "WPFTweaksDiskCleanup",
+  "WPFTweaksDeleteTempFiles",
+  "WPFTweaksEndTaskOnTaskbar",
+  "WPFTweaksRestorePoint",
+  "WPFTweaksPowershell7Tele"
+]

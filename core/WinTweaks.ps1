@@ -35,6 +35,8 @@ $coreDir  = $PSScriptRoot
 $repoRoot = Split-Path $coreDir -Parent
 
 Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
+Import-Module (Join-Path $coreDir 'Config.psm1')  -DisableNameChecking -Force
+$WD = Get-WDConfig
 Initialize-Logger -Stage $StageName
 
 # ---------------------------------------------------------------------------
@@ -351,6 +353,45 @@ function Get-AllUserRoots {
 # ---------------------------------------------------------------------------
 # Pass 1: WinUtil unattended preset
 # ---------------------------------------------------------------------------
+function Invoke-WinUtilHeadlessFallback {
+    <#
+    Headless fallback: run WinUtil with -Noui in this (SYSTEM) session.
+    Used when no interactive user is logged in OR when the GUI launcher
+    failed / timed out.
+    #>
+    param(
+        [string]$PresetPath,
+        [int]$TimeoutMs
+    )
+
+    $tempScript = Join-Path $env:TEMP "windeploy_winutil_noui_$([guid]::NewGuid().ToString('N')).ps1"
+    try {
+        $body = @"
+`$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+& ([ScriptBlock]::Create((Invoke-RestMethod 'https://christitus.com/win'))) ``
+    -Config '$($PresetPath -replace "'","''")' -Run -Noui
+"@
+        [System.IO.File]::WriteAllText($tempScript, $body, [System.Text.Encoding]::UTF8)
+
+        $proc = Start-Process powershell.exe `
+            -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$tempScript`"" `
+            -WindowStyle Hidden `
+            -PassThru `
+            -ErrorAction Stop
+
+        $finished = $proc.WaitForExit($TimeoutMs)
+        if (-not $finished) {
+            Write-LogWarning "WinUtil (headless) exceeded $([int]($TimeoutMs/60000))-minute timeout - killing PID $($proc.Id)."
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        } else {
+            Write-LogInfo "WinUtil (headless) exited with code: $($proc.ExitCode)"
+        }
+    } finally {
+        Remove-Item $tempScript -ErrorAction SilentlyContinue
+    }
+}
+
 function Start-WinUtilPreset {
     $presetPath = Join-Path $repoRoot 'config\winutil-preset.json'
 
@@ -359,18 +400,49 @@ function Start-WinUtilPreset {
         return
     }
 
-    $timeoutMs = 20 * 60 * 1000
+    $timeoutMs = $WD.WinUtilTimeoutMs
 
     # Write a temp launcher script. Passing complex iex commands through
     # CreateProcessAsUser's lpCommandLine mangles quote escaping; a file
     # avoids that entirely and also lets us set TLS in the child process.
+    #
+    # The launcher downloads WinUtil's bootstrap script as TEXT, monkey-
+    # patches the Invoke-WinUtilAutoRun call site to close the WPF form on
+    # the dispatcher thread immediately after auto-run completes, then
+    # executes the patched scriptblock with -Config and -Run. Without the
+    # patch, $sync.Form.ShowDialog() would block until the user manually
+    # closes the window -- which is exactly the "system frozen" symptom we
+    # are fixing.
     $tempScript = Join-Path $env:TEMP "windeploy_winutil_$([guid]::NewGuid().ToString('N')).ps1"
     try {
+        $escapedPreset = $presetPath -replace "'","''"
         $scriptBody = @"
-`$ErrorActionPreference = 'Stop'
+`$ErrorActionPreference = 'Continue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-& ([ScriptBlock]::Create((Invoke-RestMethod 'https://christitus.com/win'))) ``
-    -Config '$($presetPath -replace "'","''")' -Run
+
+Write-Host '[WinDeploy] Downloading WinUtil bootstrap script...'
+`$winutilSrc = Invoke-RestMethod 'https://christitus.com/win'
+
+# Auto-close hook: after Invoke-WinUtilAutoRun returns, give the UI a few
+# seconds to settle, then close the form on its dispatcher thread so
+# ShowDialog() returns and powershell.exe exits cleanly.
+`$replacement = 'Invoke-WinUtilAutoRun; Start-Sleep -Seconds 3; try { `$sync["Form"].Dispatcher.Invoke([action]{ `$sync["Form"].Close() }) } catch {}'
+`$pattern     = '(?<!function )Invoke-WinUtilAutoRun(?!\w)'
+
+`$patched = [regex]::Replace(`$winutilSrc, `$pattern, `$replacement)
+`$hits    = ([regex]::Matches(`$winutilSrc, `$pattern)).Count
+Write-Host "[WinDeploy] Auto-close patch applied to `$hits call site(s)."
+
+if (`$hits -lt 1) {
+    Write-Host '[WinDeploy] WARNING: patch matched 0 sites -- running headless (-Noui) inline so the GUI cannot hang.'
+    & ([scriptblock]::Create(`$winutilSrc)) -Config '$escapedPreset' -Run -Noui
+    Write-Host '[WinDeploy] WinUtil (headless inline) exited.'
+    exit 0
+}
+
+Write-Host '[WinDeploy] Launching WinUtil with Standard preset...'
+& ([scriptblock]::Create(`$patched)) -Config '$escapedPreset' -Run
+Write-Host '[WinDeploy] WinUtil exited.'
 "@
         [System.IO.File]::WriteAllText($tempScript, $scriptBody,
             [System.Text.Encoding]::UTF8)
@@ -379,35 +451,16 @@ function Start-WinUtilPreset {
         $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$tempScript`""
 
         # Try launching in the logged-in user's session so WinUtil GUI
-        # is visible on the desktop.
-        Write-LogInfo 'Attempting to launch WinUtil in user desktop session...'
+        # AND its console output are visible on the desktop.
+        Write-LogInfo 'Attempting to launch WinUtil in user desktop session (GUI + console)...'
         $result = Start-ProcessInUserSession -CommandLine $cmdLine -TimeoutMs $timeoutMs
 
         if ($null -eq $result) {
-            # No interactive session — fall back to headless -Noui mode.
             Write-LogInfo 'No user session - falling back to headless (-Noui) mode.'
-            $noUiBody = @"
-`$ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-& ([ScriptBlock]::Create((Invoke-RestMethod 'https://christitus.com/win'))) ``
-    -Config '$($presetPath -replace "'","''")' -Run -Noui
-"@
-            [System.IO.File]::WriteAllText($tempScript, $noUiBody,
-                [System.Text.Encoding]::UTF8)
-
-            $proc = Start-Process powershell.exe `
-                -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$tempScript`"" `
-                -WindowStyle Hidden `
-                -PassThru `
-                -ErrorAction Stop
-
-            $finished = $proc.WaitForExit($timeoutMs)
-            if (-not $finished) {
-                Write-LogWarning 'WinUtil (headless) exceeded 20-minute timeout - killing.'
-                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            } else {
-                Write-LogInfo "WinUtil (headless) exited with code: $($proc.ExitCode)"
-            }
+            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -TimeoutMs $timeoutMs
+        } elseif ($result -eq $false) {
+            Write-LogWarning 'GUI launcher timed out -- retrying once with headless (-Noui) mode.'
+            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -TimeoutMs $timeoutMs
         }
     } catch {
         Write-LogWarning "WinUtil run failed: $($_.Exception.Message)"

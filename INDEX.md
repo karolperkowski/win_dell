@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 39 |
-| PowerShell | 24 files, 6,719 lines |
-| Total size | 297 KB |
+| PowerShell | 24 files, 6,781 lines |
+| Total size | 300 KB |
 
 ## Files
 
@@ -35,11 +35,11 @@
 | `apps/.gitkeep` | -- | 0 B | Placeholder -- apps/ holds downloaded installers at runtime |
 | | | | |
 | `config/settings.json` | 144 | 3.7 KB | All deployment configuration -- edit this, not the scripts |
-| `config/winutil-preset.json` | 25 | 647 B | WinUtil tweak IDs applied during WinTweaks stage |
+| `config/winutil-preset.json` | 16 | 351 B | WinUtil tweak IDs applied during WinTweaks stage |
 | | | | |
 | `core/AppInstall.ps1` | 391 | 13.3 KB | Stages 4-5: Dell SupportAssist and Power Manager installs |
 | `core/Cleanup.ps1` | 133 | 5.0 KB | Stage 8: remove tasks, disable auto-logon, final reboot |
-| `core/Config.psm1` | 100 | 3.8 KB | Shared constants ($WD.*) -- single source of truth for paths and stage order |
+| `core/Config.psm1` | 109 | 4.2 KB | Shared constants ($WD.*) -- single source of truth for paths and stage order |
 | `core/Debloat.ps1` | 278 | 9.9 KB | Stage 2: remove bloatware apps from bloatware.json lists |
 | `core/Diagnostic.ps1` | 120 | 4.4 KB | Standalone diagnostic and troubleshooting tool |
 | `core/Logging.psm1` | 190 | 6.2 KB | Write-LogInfo/Success/Warning/Error + concurrent-safe file output |
@@ -53,7 +53,7 @@
 | `core/State.psm1` | 480 | 14.6 KB | State.json read/write, reboot counter, stage tracking |
 | `core/Tailscale.ps1` | 371 | 14.0 KB | Stage 6: Tailscale install + QR-based registration |
 | `core/WindowsUpdate.ps1` | 281 | 10.5 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
-| `core/WinTweaks.ps1` | 672 | 27.0 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
+| `core/WinTweaks.ps1` | 725 | 29.4 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
 | | | | |
 | `data/bloatware.json` | 81 | 2.3 KB | Safe and optional app removal lists for Debloat stage |
 | `data/profiles.json` | 18 | 606 B | Deployment profile definitions |
