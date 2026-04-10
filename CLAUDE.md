@@ -66,7 +66,9 @@ Scripts that run before Config loads (bootstrap, install, uninstall, Resilience 
 
 ## Stage pipeline order
 
-`PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > WindowsUpdate > Cleanup`
+`PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > RemoteAccess > WindowsUpdate > Cleanup`
+
+`RemoteAccess` runs after `InstallTailscale` so WinRM TrustedHosts can be scoped to the Tailscale CGNAT (`100.*`), and before `WindowsUpdate` so the machine remains remotely debuggable across the long update phase.
 
 WindowsUpdate runs **last** because it takes the longest and requires multiple reboots.
 

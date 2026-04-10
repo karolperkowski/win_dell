@@ -41,6 +41,12 @@
       "ContinueOnError": false,
       "TimeoutMinutes": 45
     },
+    "RemoteAccess": {
+      "ContinueOnError": true,
+      "TimeoutMinutes": 15,
+      "AllowLan": false,
+      "TrustedHostMask": "100.*"
+    },
     "Cleanup": {
       "FinalReboot": true,
       "TimeoutMinutes": 60

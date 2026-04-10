@@ -45,6 +45,7 @@ $Script:STAGE_ORDER = @(
     'InstallDellPowerManager'
     'InstallRustDesk'
     'InstallTailscale'
+    'RemoteAccess'
     'WindowsUpdate'
     'Cleanup'
 )
@@ -57,6 +58,7 @@ $Script:STAGE_LABELS = [ordered]@{
     InstallDellPowerManager  = 'Dell Power Manager'
     InstallRustDesk          = 'RustDesk'
     InstallTailscale         = 'Tailscale'
+    RemoteAccess             = 'Remote Access'
     WindowsUpdate            = 'Windows Update'
     Cleanup                  = 'Cleanup'
 }

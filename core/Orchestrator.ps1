@@ -95,6 +95,7 @@ $Script:STAGE_SCRIPTS = [ordered]@{
     InstallDellPowerManager  = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallRustDesk          = Join-Path $Script:CoreDir 'AppInstall.ps1'
     InstallTailscale         = Join-Path $Script:CoreDir 'Tailscale.ps1'
+    RemoteAccess             = Join-Path $Script:CoreDir 'RemoteAccess.ps1'
     WindowsUpdate            = Join-Path $Script:CoreDir 'WindowsUpdate.ps1'
     Cleanup                  = Join-Path $Script:CoreDir 'Cleanup.ps1'
 }
