@@ -169,7 +169,7 @@ jobs:
           $manifest | ConvertTo-Json -Depth 3 | Set-Content 'manifest.json' -Encoding UTF8
 
           if (-not $env:GPG_PRIVATE_KEY) {
-              Write-Warning 'GPG_PRIVATE_KEY not set - skipping signature. See docs/gpg-setup.md'
+              Write-Warning 'GPG_PRIVATE_KEY not set - skipping signature. See docs/GPG-SETUP.md'
               'pending' | Set-Content 'manifest.sig' -Encoding UTF8
               exit 0
           }

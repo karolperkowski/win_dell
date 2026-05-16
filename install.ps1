@@ -73,7 +73,7 @@ $REPO_NAME     = 'win_dell'
 $MANIFEST_URL  = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/manifest.json"
 $SIG_URL       = "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/manifest.sig"
 
-# Public key fingerprint - paste your public key here after running docs/gpg-setup.md
+# Public key fingerprint - paste your public key here after running docs/GPG-SETUP.md
 # This is the ONLY value that must be updated when you rotate your GPG key.
 # The private key never leaves your machine or GitHub Secrets.
 $GPG_PUBLIC_KEY = @'
@@ -140,7 +140,7 @@ function Get-VerifiedManifest {
     # Placeholder manifest: GitHub Action hasn't run yet (needs GPG_PRIVATE_KEY secret)
     if ($obj.zip_sha256 -eq 'pending' -or $obj.commit_sha -eq 'pending' -or $remoteSig -eq 'pending') {
         Write-InstallLog 'Manifest is placeholder - signature check skipped until GPG key is configured.' WARN
-        Write-InstallLog 'See docs/gpg-setup.md to generate your signing key.' WARN
+        Write-InstallLog 'See docs/GPG-SETUP.md to generate your signing key.' WARN
         return @{
             CommitSha   = 'main'
             ZipUrl      = "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/main.zip"
@@ -152,7 +152,7 @@ function Get-VerifiedManifest {
     # GPG not configured yet - skip verification
     if ($GPG_PUBLIC_KEY -like '*REPLACE_WITH*') {
         Write-InstallLog 'GPG public key not configured - skipping signature verification.' WARN
-        Write-InstallLog 'Run docs/gpg-setup.md then paste your public key into install.ps1.' WARN
+        Write-InstallLog 'Run docs/GPG-SETUP.md then paste your public key into install.ps1.' WARN
     } else {
         # Import public key and verify signature
         $gpgAvailable = Get-Command gpg -ErrorAction SilentlyContinue

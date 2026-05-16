@@ -64,6 +64,26 @@ Scripts that run before Config loads (bootstrap, install, uninstall, Resilience 
 
 ---
 
+## Stage script return contract
+
+Every stage script in `core/` runs in its own `Invoke-Stage` boundary and **must** return exactly one hashtable as its final pipeline output:
+
+```powershell
+return @{ Status = 'Complete';       Message = 'Human readable.' }
+return @{ Status = 'RebootRequired'; Message = 'Why reboot needed.' }
+return @{ Status = 'Failed';         Message = $_.Exception.Message }
+```
+
+**The single biggest footgun**: any other output that flows to the pipeline gets concatenated into an `Object[]` along with the hashtable, and the orchestrator rejects the whole thing with `Stage returned invalid result (type: Object[])`. Observed 2026-05-16 in `InstallTailscale` — inline `& winget ... 2>&1` merged winget's stdout into the script's return value. The rule:
+
+- Native commands with `2>&1` must have their output captured into a variable (`$captured = @(& exe ... 2>&1)`) or piped to `Out-Null`/`ForEach-Object` — never left to flow.
+- Use `Invoke-WingetCli` from `core/Winget.psm1` instead of inline `& winget` — it does this capture for you.
+- Stage scripts must `return` exactly once, with a `@{ Status; Message }` hashtable. Never re-throw past the outer try.
+
+Stages must **not** call `Restart-Computer` directly — return `RebootRequired` and let the orchestrator handle it.
+
+---
+
 ## Stage pipeline order
 
 `PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > RemoteAccess > WindowsUpdate > Cleanup`
@@ -173,3 +193,27 @@ Select-String -Path C:\ProgramData\WinDeploy\Logs\windeploy.log `
 **To refresh the preset:** run WinUtil interactively (`irm https://christitus.com/win | iex` from an elevated PowerShell), tick the desired Tweaks/Features/Installs, File menu → **Export Preset**, and overwrite `config/winutil-preset.json`. WinUtil's exporter writes UTF-16 LE with BOM — the child reads via `[System.IO.File]::ReadAllText` which auto-detects BOM, so no manual conversion is needed. Both flat-array (`["WPFTweaksX",...]`) and nested-object (`{"WPFTweaks":[...],"WPFInstall":[...],"WPFFeature":[...]}`) formats are accepted.
 
 **Installs ownership:** installs (winget) are owned by `data/profiles.json` + `Install-WingetApps` in `WinTweaks.ps1`, not by WinUtil. If you re-export a preset, leave the WPFInstall section empty so installs flow through the path with idempotency, logging, and exit-code handling we control.
+
+---
+
+## Tailscale auth flow (`core/Tailscale.ps1`)
+
+Tailscale registration races three outcomes against each other instead of waiting for an auth URL alone. Three failure modes the old single-signal wait could not distinguish:
+
+- **Already-authed silent succeed**: `tailscale up` finds stored creds, succeeds without printing a URL.
+- **Out-of-band sign-in**: the user authenticates through the Tailscale admin or a previously-printed URL; the daemon flips to `Running` while our wait loop watches stdout for a URL match that never comes.
+- **URL format we don't match**: newer / enterprise control-plane URLs use `controlplane.tailscale.com` instead of `login.tailscale.com`.
+
+The dual-condition wait loop exits on **URL captured** OR **`Test-TailscaleRegistered` returns true** OR **timeout**. If the daemon already shows `BackendState=Running` (pre-spawn check at the top of the stage), QR generation is skipped entirely. On timeout, every line captured from `tailscale up` is dumped to the log so the next failure is debuggable.
+
+Thread-safety: `Start-TailscaleUp` writes captured URL + emitted lines into `[hashtable]::Synchronized(...)` so the async `add_OutputDataReceived` handler (runs on a .NET thread-pool thread) can safely communicate with the main polling loop. PS 5.1's `$script:`-scope assignment from event handlers is unreliable — observed silent stuck states.
+
+**Pre-auth key path**: setting `Tailscale.AuthKey` in `config/settings.json` skips the QR entirely (`tailscale up --authkey=...`). Recommended for repeated unattended deploys.
+
+---
+
+## CI gotcha: INDEX.md self-reference
+
+`INDEX.md` describes its own line count and byte size in its own entry. Writing `INDEX.md` changes both. The pre-commit hook regenerates **in a loop** (up to 5 iterations) until `git diff INDEX.md` is empty — without this loop, CI's "Verify INDEX.md is up to date" check fails on every push because the staged INDEX describes itself one revision stale. Converges in 1-2 iterations in practice.
+
+Also: `Update-Index.ps1` excludes `.git/`, `.trunk/`, `.vscode/`, `apps/<binaries>`, `logs/`, and `state.json`. CI uses a fresh checkout so the local-only `.trunk/` (trunk.io cache) and `.vscode/` directories must be filtered to keep local and CI line counts equal.
