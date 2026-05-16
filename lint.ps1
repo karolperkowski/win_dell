@@ -91,7 +91,7 @@ function Invoke-PSScriptAnalyzer {
     )
 
     $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
-               Where-Object { $_.FullName -notlike '*\.git\*' }
+               Where-Object { $_.FullName -notlike '*\.git\*' -and $_.FullName -notlike '*\.trunk\*' }
 
     foreach ($file in $psFiles) {
         $Script:FilesTested++
@@ -127,7 +127,7 @@ function Invoke-PS51CompatCheck {
     )
 
     $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
-               Where-Object { $_.FullName -notlike '*\.git\*' } |
+               Where-Object { $_.FullName -notlike '*\.git\*' -and $_.FullName -notlike '*\.trunk\*' } |
                Where-Object { $_.Name -ne 'lint.ps1' }   # exclude self - pattern defs would self-match
 
     foreach ($file in $psFiles) {
@@ -153,7 +153,7 @@ function Invoke-ScheduledTaskCheck {
     Write-LintLog "`nChecking scheduled task definitions..."
 
     $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
-               Where-Object { $_.FullName -notlike '*\.git\*' }
+               Where-Object { $_.FullName -notlike '*\.git\*' -and $_.FullName -notlike '*\.trunk\*' }
 
     foreach ($file in $psFiles) {
         $content = Get-Content $file.FullName -Raw
@@ -220,7 +220,7 @@ function Invoke-HardcodedPathCheck {
     )
 
     $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |
-               Where-Object { $_.FullName -notlike '*\.git\*' } |
+               Where-Object { $_.FullName -notlike '*\.git\*' -and $_.FullName -notlike '*\.trunk\*' } |
                Where-Object { $_.Name -notin $allowedFiles }
 
     foreach ($file in $psFiles) {
