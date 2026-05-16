@@ -8,3 +8,7 @@ logs/
 
 # State file - machine-specific, never commit
 state.json
+
+# Local tooling caches - not part of the repo
+.trunk/
+.vscode/

@@ -65,11 +65,17 @@ $Annotations = @{
 # ── Exclusion patterns (match .gitignore) ───────────────────────────────────
 function Test-Excluded {
     param([string]$RelPath)
-    if ($RelPath -like '.git\*' -or $RelPath -like '.git/*') { return $true }
+    if ($RelPath -like '.git\*'     -or $RelPath -like '.git/*')     { return $true }
+    # Local-only tooling caches: trunk.io and VS Code workspace settings.
+    # These live in untracked dirs on dev machines and don't exist on CI's
+    # fresh checkout. Counting them locally produces an INDEX.md the CI
+    # "Verify INDEX.md is up to date" check rejects.
+    if ($RelPath -like '.trunk\*'   -or $RelPath -like '.trunk/*')   { return $true }
+    if ($RelPath -like '.vscode\*'  -or $RelPath -like '.vscode/*')  { return $true }
     if ($RelPath -like 'apps\*.exe' -or $RelPath -like 'apps/*.exe') { return $true }
     if ($RelPath -like 'apps\*.msi' -or $RelPath -like 'apps/*.msi') { return $true }
     if ($RelPath -like 'apps\*.msix' -or $RelPath -like 'apps/*.msix') { return $true }
-    if ($RelPath -like 'logs\*' -or $RelPath -like 'logs/*') { return $true }
+    if ($RelPath -like 'logs\*'     -or $RelPath -like 'logs/*')     { return $true }
     if ($RelPath -eq 'state.json') { return $true }
     return $false
 }
