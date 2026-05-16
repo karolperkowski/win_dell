@@ -97,7 +97,6 @@ win_dell/
 │   ├── Orchestrator.ps1     master controller — runs stages, auto-snapshots on failure
 │   ├── Monitor.ps1          WPF progress window + Tailscale QR + auto-snapshot pointer
 │   ├── Notify.ps1           tray notification on completion (self-removing)
-│   ├── Diagnostic.ps1       standalone diagnostic tool
 │   ├── PowerSettings.ps1    stage 1
 │   ├── Debloat.ps1          stage 2
 │   ├── WinTweaks.ps1        stage 3
@@ -169,11 +168,11 @@ Edit `config/settings.json`:
 
 | Key | Default | Effect |
 |---|---|---|
-| `WinTweaks.RunWinUtil` | `true` | Skip WinUtil, only run direct registry tweaks |
-| `Tailscale.AuthKey` | `""` | Pre-auth key from `login.tailscale.com/admin/settings/keys`. Skips the QR/browser flow entirely. Recommended for unattended deploys. |
-| `Tailscale.QrTimeoutMinutes` | `30` | QR registration timeout |
-| `Debloat.RemoveOptional` | `false` | Also remove optional app list |
-| `Cleanup.FinalReboot` | `true` | Skip final reboot |
+| `WinTweaks.RunWinUtil` | `true` | Run WinUtil Pass 1 (preset apply) before the direct registry tweaks in Pass 2. Set `false` to run only Pass 2. |
+| `Tailscale.AuthKey` | `""` | Pre-auth key from `login.tailscale.com/admin/settings/keys`. When non-empty, registers via `--authkey` and skips the QR/browser flow. Recommended for unattended deploys. |
+| `Tailscale.QrTimeoutMinutes` | `30` | How long the QR registration wait loop runs before the stage gives up. |
+| `Debloat.RemoveOptional` | `false` | Remove only the `safe` bloatware list. Set `true` to also remove the `optional` list. |
+| `Cleanup.FinalReboot` | `true` | Reboot after the Cleanup stage completes. Set `false` to leave the machine running. |
 
 ---
 

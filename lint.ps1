@@ -204,7 +204,6 @@ function Invoke-HardcodedPathCheck {
     # may not be loaded yet (bootstrap context) or they ARE the config source.
     $allowedFiles = @(
         'Resilience.psm1'   # self-contained by design, no Config dependency
-        'Diagnostic.ps1'    # standalone tool
         'lint.ps1'          # development tool
         'Config.psm1'       # IS the constants definition
         'State.psm1'        # loads before Config in some contexts
@@ -246,7 +245,7 @@ function Invoke-StageContractCheck {
     Write-LintLog "`nChecking stage script return contracts..."
 
     $stageFiles = Get-ChildItem (Join-Path $RepoRoot 'core') -Include '*.ps1' |
-                  Where-Object { $_.Name -notin @('Orchestrator.ps1','Monitor.ps1','Notify.ps1','Diagnostic.ps1') }
+                  Where-Object { $_.Name -notin @('Orchestrator.ps1','Monitor.ps1','Notify.ps1') }
 
 
     foreach ($file in $stageFiles) {

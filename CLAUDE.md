@@ -216,4 +216,4 @@ Thread-safety: `Start-TailscaleUp` writes captured URL + emitted lines into `[ha
 
 `INDEX.md` describes its own line count and byte size in its own entry. Writing `INDEX.md` changes both. The pre-commit hook regenerates **in a loop** (up to 5 iterations) until `git diff INDEX.md` is empty — without this loop, CI's "Verify INDEX.md is up to date" check fails on every push because the staged INDEX describes itself one revision stale. Converges in 1-2 iterations in practice.
 
-Also: `Update-Index.ps1` excludes `.git/`, `.trunk/`, `.vscode/`, `apps/<binaries>`, `logs/`, and `state.json`. CI uses a fresh checkout so the local-only `.trunk/` (trunk.io cache) and `.vscode/` directories must be filtered to keep local and CI line counts equal.
+Also: `Update-Index.ps1` excludes `.git/`, `.trunk/`, `.vscode/`, `.claude/`, `apps/<binaries>`, `logs/`, and `state.json`. CI uses a fresh checkout so the local-only `.trunk/` (trunk.io cache), `.vscode/`, and `.claude/` (Claude Code project settings) directories must be filtered to keep local and CI line counts equal.

@@ -43,14 +43,14 @@ $Annotations = @{
     'core/Monitor.ps1'              = 'WPF progress window with stage list, Tailscale QR, error panel'
     'core/Notify.ps1'               = 'Tray notification on deployment completion, self-removes'
     'core/Notify-Webhook.ps1'       = 'Webhook notification for deployment events'
-    'core/Diagnostic.ps1'           = 'Standalone diagnostic and troubleshooting tool'
     'core/PowerSettings.ps1'        = 'Stage 1: power plan, sleep, and display timeout settings'
     'core/Debloat.ps1'              = 'Stage 2: remove bloatware apps from bloatware.json lists'
     'core/WinTweaks.ps1'            = 'Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset'
-    'core/AppInstall.ps1'           = 'Stages 4-5: Dell SupportAssist and Power Manager installs'
-    'core/Tailscale.ps1'            = 'Stage 6: Tailscale install + QR-based registration'
-    'core/WindowsUpdate.ps1'        = 'Stage 7: Windows Update (last -- multiple reboots expected)'
-    'core/Cleanup.ps1'              = 'Stage 8: remove tasks, disable auto-logon, final reboot'
+    'core/AppInstall.ps1'           = 'Stages 4-6: Dell SupportAssist, Dell Power Manager, RustDesk'
+    'core/Tailscale.ps1'            = 'Stage 7: Tailscale install + QR-based registration'
+    'core/RemoteAccess.ps1'         = 'Stage 8: RDP + WinRM (TrustedHosts=100.*) + OpenSSH'
+    'core/WindowsUpdate.ps1'        = 'Stage 9: Windows Update (last -- multiple reboots expected)'
+    'core/Cleanup.ps1'              = 'Stage 10: remove tasks, disable auto-logon, final reboot'
     'config/settings.json'          = 'All deployment configuration -- edit this, not the scripts'
     'config/winutil-preset.json'    = 'WinUtil tweak IDs applied during WinTweaks stage'
     'data/bloatware.json'           = 'Safe and optional app removal lists for Debloat stage'
@@ -68,12 +68,14 @@ $Annotations = @{
 function Test-Excluded {
     param([string]$RelPath)
     if ($RelPath -like '.git\*'     -or $RelPath -like '.git/*')     { return $true }
-    # Local-only tooling caches: trunk.io and VS Code workspace settings.
-    # These live in untracked dirs on dev machines and don't exist on CI's
-    # fresh checkout. Counting them locally produces an INDEX.md the CI
-    # "Verify INDEX.md is up to date" check rejects.
+    # Local-only tooling caches: trunk.io, VS Code workspace settings, and
+    # Claude Code's per-project settings. These live in untracked dirs on
+    # dev machines and don't exist on CI's fresh checkout. Counting them
+    # locally produces an INDEX.md the CI "Verify INDEX.md is up to date"
+    # check rejects.
     if ($RelPath -like '.trunk\*'   -or $RelPath -like '.trunk/*')   { return $true }
     if ($RelPath -like '.vscode\*'  -or $RelPath -like '.vscode/*')  { return $true }
+    if ($RelPath -like '.claude\*'  -or $RelPath -like '.claude/*')  { return $true }
     if ($RelPath -like 'apps\*.exe' -or $RelPath -like 'apps/*.exe') { return $true }
     if ($RelPath -like 'apps\*.msi' -or $RelPath -like 'apps/*.msi') { return $true }
     if ($RelPath -like 'apps\*.msix' -or $RelPath -like 'apps/*.msix') { return $true }

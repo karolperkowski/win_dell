@@ -42,7 +42,7 @@ The non-negotiables for contributing to `win_dell`. Full context in [CLAUDE.md](
 ## Git / CI
 
 23. **Pre-commit hook regenerates `INDEX.md` in a loop** until `git diff INDEX.md` is empty (self-reference convergence). Don't disable the hook.
-24. **`Update-Index.ps1` excludes `.git/`, `.trunk/`, `.vscode/`, `apps/<binaries>`, `logs/`, `state.json`.** Local-only directories must be filtered so local and CI line counts agree.
+24. **`Update-Index.ps1` excludes `.git/`, `.trunk/`, `.vscode/`, `.claude/`, `apps/<binaries>`, `logs/`, `state.json`.** Local-only directories must be filtered so local and CI line counts agree.
 25. **CI auto-commits `manifest.json` + `manifest.sig` after every push to main.** `git pull --rebase` before the next push.
 26. **Never `git push --force` to `main`.** Never skip pre-commit hooks (`--no-verify`) or bypass signing.
 
