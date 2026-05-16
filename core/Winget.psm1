@@ -24,7 +24,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'Logging.psm1') -DisableNameChecking -Force
+# Import Logging WITHOUT -Force: when a parent script loads this module via
+# Import-Module -Force, a nested Import-Module -Force here removes Logging from
+# the parent's scope and re-imports it into this module's nested scope. Result:
+# parent calls Initialize-Logger after loading Winget.psm1 and gets a
+# CommandNotFoundException. Observed 2026-05-16 in Orchestrator.ps1:340.
+# A plain Import-Module is idempotent — no-op when Logging is already loaded.
+Import-Module (Join-Path $PSScriptRoot 'Logging.psm1') -DisableNameChecking
 
 # Known winget exit codes -> human-readable meanings.
 # Source: src/AppInstallerSharedLib/Public/AppInstallerErrors.h in
