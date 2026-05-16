@@ -11,5 +11,10 @@
   "WPFTweaksDeleteTempFiles",
   "WPFTweaksEndTaskOnTaskbar",
   "WPFTweaksRestorePoint",
-  "WPFTweaksPowershell7Tele"
+  "WPFTweaksPowershell7Tele",
+  "WPFToggleDetailedBSoD",
+  "WPFToggleNumLock",
+  "WPFToggleBatteryPercentage",
+  "WPFFeaturesdotnet",
+  "WPFFeatureEnableLegacyRecovery"
 ]

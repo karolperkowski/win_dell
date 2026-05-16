@@ -290,6 +290,45 @@ function Set-StageComplete {
     Write-Verbose "[State] Stage '$StageName' marked complete."
 }
 
+function Set-StageExtra {
+    <#
+    .SYNOPSIS
+        Records a sub-status annotation against a stage in StageExtras.
+
+    .DESCRIPTION
+        Writes a single key/value pair to state['StageExtras'] using the
+        composite key "<StageName>_<Key>". Used by stage scripts to surface
+        sub-status the orchestrator's PASS/FAIL doesn't capture (e.g. WinUtil
+        outcome inside the WinTweaks stage). Does not affect CompletedStages,
+        FailedStages, or CurrentStage.
+
+    .PARAMETER StageName
+        Stage that owns this annotation.
+
+    .PARAMETER Key
+        Annotation key. Stored as "<StageName>_<Key>" so all keys for a stage
+        share a prefix and are easy to filter.
+
+    .PARAMETER Value
+        Any JSON-serialisable value (string, number, array, hashtable).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StageName,
+        [Parameter(Mandatory)][string]$Key,
+        $Value
+    )
+
+    Assert-StateExists
+    Invoke-WithFileLock {
+        $state = Read-StateFile
+        if (-not $state['StageExtras']) { $state['StageExtras'] = @{} }
+        $state['StageExtras']["${StageName}_${Key}"] = $Value
+        $state['LastUpdatedAt'] = (Get-Date -Format 'o')
+        Write-StateFile -State $state
+    }
+}
+
 function Test-StageComplete {
     <#
     .SYNOPSIS
@@ -479,6 +518,7 @@ Export-ModuleMember -Function @(
     'Get-DeployState'
     'Save-DeployState'
     'Set-StageComplete'
+    'Set-StageExtra'
     'Test-StageComplete'
     'Set-CurrentStage'
     'Get-CurrentStage'

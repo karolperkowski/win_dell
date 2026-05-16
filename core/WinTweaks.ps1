@@ -36,6 +36,7 @@ $repoRoot = Split-Path $coreDir -Parent
 
 Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
 Import-Module (Join-Path $coreDir 'Config.psm1')  -DisableNameChecking -Force
+Import-Module (Join-Path $coreDir 'State.psm1')   -DisableNameChecking -Force
 $WD = Get-WDConfig
 Initialize-Logger -Stage $StageName
 
@@ -354,25 +355,153 @@ function Get-AllUserRoots {
 # ---------------------------------------------------------------------------
 # Pass 1: WinUtil unattended preset
 # ---------------------------------------------------------------------------
+# The two launch paths (user-session GUI vs. SYSTEM headless) share a single
+# child-script body produced by Get-WinUtilChildScriptBody. The child:
+#   1. Starts a transcript at $ChildLog so its output reaches windeploy.log.
+#   2. Downloads the WinUtil bundle.
+#   3. Catalogs the WPF{Install|Tweaks|Feature|Toggle} IDs the bundle declares,
+#      compares them with the preset, and records unknown IDs to $ChildMeta.
+#   4. In GUI mode: regex-patches Invoke-WinUtilAutoRun to auto-close the
+#      form. If the patch matches 0 sites, falls back to -Noui inline.
+#      In headless mode: runs -Noui directly.
+#   5. Writes a structured outcome to $ChildMeta.
+# The parent reads $ChildMeta + $ChildLog after the child exits and surfaces
+# outcome into windeploy.log and StageExtras so a silent "did nothing" run is
+# no longer invisible.
+
+function Get-WinUtilChildScriptBody {
+    param(
+        [Parameter(Mandatory)][string]$PresetPath,
+        [Parameter(Mandatory)][string]$ChildLog,
+        [Parameter(Mandatory)][string]$ChildMeta,
+        [Parameter(Mandatory)][ValidateSet('GUI-AutoClose','Headless')][string]$Mode
+    )
+
+    $escapedPreset = $PresetPath -replace "'","''"
+    $escapedLog    = $ChildLog   -replace "'","''"
+    $escapedMeta   = $ChildMeta  -replace "'","''"
+    $wantHeadless  = if ($Mode -eq 'Headless') { '$true' } else { '$false' }
+
+    return @"
+`$ErrorActionPreference = 'Continue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
+
+`$childLog     = '$escapedLog'
+`$childMeta    = '$escapedMeta'
+`$presetPath   = '$escapedPreset'
+`$wantHeadless = $wantHeadless
+
+try { Start-Transcript -Path `$childLog -Force -IncludeInvocationHeader | Out-Null } catch {}
+
+`$meta = [ordered]@{
+    LaunchMode         = if (`$wantHeadless) { 'headless-noui' } else { 'gui-autoclose' }
+    BundleBytes        = 0
+    BundleIdCount      = 0
+    PresetIds          = @()
+    KnownIds           = @()
+    UnknownIds         = @()
+    AutoClosePatchHits = 0
+    ExitReason         = 'unknown'
+}
+
+try {
+    Write-Host '[WinDeploy] Downloading WinUtil bootstrap script...'
+    `$winutilSrc = Invoke-RestMethod 'https://christitus.com/win'
+    `$meta.BundleBytes = `$winutilSrc.Length
+    Write-Host ("[WinDeploy] Bundle size: {0} bytes." -f `$meta.BundleBytes)
+
+    # Catalog every WPF{Install|Tweaks|Feature|Toggle} key the bundle declares.
+    # These appear as JSON-style keys inside the bundle's inlined config blobs.
+    `$bundleIdRegex = '"(WPF(?:Install|Tweaks|Feature[s]?|Toggle)\w+)"\s*:'
+    `$bundleIds = @{}
+    foreach (`$m in [regex]::Matches(`$winutilSrc, `$bundleIdRegex)) {
+        `$bundleIds[`$m.Groups[1].Value] = `$true
+    }
+    `$meta.BundleIdCount = `$bundleIds.Count
+    Write-Host ("[WinDeploy] Bundle declares {0} IDs." -f `$bundleIds.Count)
+
+    # Parse preset - accept flat-array or nested {WPFTweaks,WPFInstall,WPFFeature}
+    `$presetRaw = Get-Content -Raw -Path `$presetPath -Encoding UTF8
+    `$presetObj = `$presetRaw | ConvertFrom-Json
+    `$presetIds = @()
+    if (`$presetObj -is [array]) {
+        `$presetIds = @(`$presetObj)
+    } else {
+        foreach (`$prop in 'WPFTweaks','WPFInstall','WPFFeature') {
+            if (`$presetObj.PSObject.Properties.Name -contains `$prop) {
+                `$presetIds += @(`$presetObj.`$prop)
+            }
+        }
+    }
+    `$meta.PresetIds  = `$presetIds
+    `$meta.KnownIds   = @(`$presetIds | Where-Object { `$bundleIds.ContainsKey(`$_) })
+    `$meta.UnknownIds = @(`$presetIds | Where-Object { -not `$bundleIds.ContainsKey(`$_) })
+    Write-Host ("[WinDeploy] Preset: {0} total, {1} known, {2} unknown." -f `
+        `$meta.PresetIds.Count, `$meta.KnownIds.Count, `$meta.UnknownIds.Count)
+    if (`$meta.UnknownIds.Count -gt 0) {
+        Write-Host ("[WinDeploy] WARNING: unknown IDs (silently dropped by WinUtil): " + (`$meta.UnknownIds -join ', '))
+    }
+
+    if (`$wantHeadless) {
+        Write-Host '[WinDeploy] Running WinUtil headless (-Noui)...'
+        & ([scriptblock]::Create(`$winutilSrc)) -Config `$presetPath -Run -Noui
+        `$meta.ExitReason = ("headless-exit-{0}" -f `$LASTEXITCODE)
+    } else {
+        # After Invoke-WinUtilAutoRun returns, close the form on its dispatcher
+        # thread so ShowDialog() returns and powershell.exe exits cleanly.
+        # Without this, the WPF window stays open and only the orchestrator's
+        # timeout would unblock the stage - which it would mark SUCCESS with
+        # nothing actually applied.
+        `$replacement = 'Invoke-WinUtilAutoRun; Start-Sleep -Seconds 3; try { `$sync["Form"].Dispatcher.Invoke([action]{ `$sync["Form"].Close() }) } catch {}'
+        `$pattern     = '(?<!function )Invoke-WinUtilAutoRun(?!\w)'
+        `$patched     = [regex]::Replace(`$winutilSrc, `$pattern, `$replacement)
+        `$meta.AutoClosePatchHits = ([regex]::Matches(`$winutilSrc, `$pattern)).Count
+        Write-Host ("[WinDeploy] Auto-close patch applied to {0} call site(s)." -f `$meta.AutoClosePatchHits)
+
+        if (`$meta.AutoClosePatchHits -lt 1) {
+            Write-Host '[WinDeploy] Patch matched 0 sites - falling back to headless (-Noui) inline.'
+            `$meta.LaunchMode = 'gui-patch-miss-headless-fallback'
+            & ([scriptblock]::Create(`$winutilSrc)) -Config `$presetPath -Run -Noui
+            `$meta.ExitReason = ("headless-inline-exit-{0}" -f `$LASTEXITCODE)
+        } else {
+            Write-Host '[WinDeploy] Launching WinUtil with patched bundle...'
+            & ([scriptblock]::Create(`$patched)) -Config `$presetPath -Run
+            `$meta.ExitReason = ("gui-exit-{0}" -f `$LASTEXITCODE)
+        }
+    }
+    Write-Host '[WinDeploy] WinUtil child exiting.'
+} catch {
+    `$meta.ExitReason = ("exception: {0}" -f `$_.Exception.Message)
+    Write-Host ("[WinDeploy] ERROR: {0}" -f `$_.Exception.Message)
+} finally {
+    try {
+        `$meta | ConvertTo-Json -Depth 5 | Set-Content -Path `$childMeta -Encoding UTF8 -Force
+    } catch {
+        Write-Host ("[WinDeploy] WARN: could not write meta to {0}: {1}" -f `$childMeta, `$_.Exception.Message)
+    }
+    try { Stop-Transcript | Out-Null } catch {}
+}
+"@
+}
+
 function Invoke-WinUtilHeadlessFallback {
     <#
     Headless fallback: run WinUtil with -Noui in this (SYSTEM) session.
     Used when no interactive user is logged in OR when the GUI launcher
-    failed / timed out.
+    failed / timed out. Writes to the same ChildLog/ChildMeta as the GUI
+    path so the parent reads a single, authoritative outcome record.
     #>
     param(
-        [string]$PresetPath,
-        [int]$TimeoutMs
+        [Parameter(Mandatory)][string]$PresetPath,
+        [Parameter(Mandatory)][string]$ChildLog,
+        [Parameter(Mandatory)][string]$ChildMeta,
+        [Parameter(Mandatory)][int]$TimeoutMs
     )
 
     $tempScript = Join-Path $env:TEMP "windeploy_winutil_noui_$([guid]::NewGuid().ToString('N')).ps1"
     try {
-        $body = @"
-`$ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-& ([ScriptBlock]::Create((Invoke-RestMethod 'https://christitus.com/win'))) ``
-    -Config '$($PresetPath -replace "'","''")' -Run -Noui
-"@
+        $body = Get-WinUtilChildScriptBody -PresetPath $PresetPath -ChildLog $ChildLog `
+                                            -ChildMeta $ChildMeta -Mode 'Headless'
         [System.IO.File]::WriteAllText($tempScript, $body, [System.Text.Encoding]::UTF8)
 
         $proc = Start-Process powershell.exe `
@@ -393,81 +522,117 @@ function Invoke-WinUtilHeadlessFallback {
     }
 }
 
+function Read-WinUtilChildOutcome {
+    <#
+    Ingests the child transcript into windeploy.log and the child meta into
+    StageExtras. Always runs after both GUI and headless paths so the
+    orchestrator never silently swallows a WinUtil failure.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ChildLog,
+        [Parameter(Mandatory)][string]$ChildMeta,
+        [Parameter(Mandatory)][string]$StageName
+    )
+
+    if (Test-Path $ChildLog) {
+        Write-LogInfo '--- WinUtil child transcript begin ---'
+        Get-Content -Path $ChildLog -Encoding UTF8 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-LogInfo "  $_" }
+        Write-LogInfo '--- WinUtil child transcript end ---'
+    } else {
+        Write-LogWarning "WinUtil child transcript not found at $ChildLog"
+    }
+
+    if (-not (Test-Path $ChildMeta)) {
+        Write-LogWarning "WinUtil child meta not found at $ChildMeta - cannot summarize outcome."
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value 'no-meta-file' } catch {}
+        return
+    }
+
+    $meta = $null
+    try {
+        $meta = Get-Content -Raw -Path $ChildMeta -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        Write-LogWarning "WinUtil meta parse failed: $($_.Exception.Message)"
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value 'meta-parse-failed' } catch {}
+        return
+    }
+
+    $presetCount  = @($meta.PresetIds).Count
+    $knownCount   = @($meta.KnownIds).Count
+    $unknownCount = @($meta.UnknownIds).Count
+    $unknownList  = @($meta.UnknownIds)
+
+    Write-LogInfo ("WinUtil outcome: mode={0}, autoClosePatchHits={1}, presetIds={2} ({3} known, {4} unknown), exit={5}" -f `
+        $meta.LaunchMode, $meta.AutoClosePatchHits, $presetCount, $knownCount, $unknownCount, $meta.ExitReason)
+
+    if ($unknownCount -gt 0) {
+        Write-LogWarning ("Unknown preset IDs (silently dropped by WinUtil): " + ($unknownList -join ', '))
+    }
+
+    try {
+        Set-StageExtra -StageName $StageName -Key 'WinUtilLaunchMode'         -Value $meta.LaunchMode
+        Set-StageExtra -StageName $StageName -Key 'WinUtilAutoClosePatchHits' -Value $meta.AutoClosePatchHits
+        Set-StageExtra -StageName $StageName -Key 'WinUtilPresetIdCount'     -Value $presetCount
+        Set-StageExtra -StageName $StageName -Key 'WinUtilKnownIdCount'      -Value $knownCount
+        Set-StageExtra -StageName $StageName -Key 'WinUtilUnknownPresetIds'  -Value $unknownList
+        Set-StageExtra -StageName $StageName -Key 'WinUtilExitReason'        -Value $meta.ExitReason
+        Set-StageExtra -StageName $StageName -Key 'WinUtilBundleIdCount'     -Value $meta.BundleIdCount
+    } catch {
+        Write-LogWarning "Could not write WinUtil StageExtras: $($_.Exception.Message)"
+    }
+}
+
 function Start-WinUtilPreset {
     $presetPath = Join-Path $repoRoot 'config\winutil-preset.json'
 
     if (-not (Test-Path $presetPath)) {
         Write-LogWarning "WinUtil preset not found at '$presetPath' -- skipping WinUtil pass."
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value 'skipped: preset missing' } catch {}
         return
     }
 
     $timeoutMs = $WD.WinUtilTimeoutMs
+    $id        = [guid]::NewGuid().ToString('N')
 
-    # Write a temp launcher script. Passing complex iex commands through
-    # CreateProcessAsUser's lpCommandLine mangles quote escaping; a file
-    # avoids that entirely and also lets us set TLS in the child process.
-    #
-    # The launcher downloads WinUtil's bootstrap script as TEXT, monkey-
-    # patches the Invoke-WinUtilAutoRun call site to close the WPF form on
-    # the dispatcher thread immediately after auto-run completes, then
-    # executes the patched scriptblock with -Config and -Run. Without the
-    # patch, $sync.Form.ShowDialog() would block until the user manually
-    # closes the window -- which is exactly the "system frozen" symptom we
-    # are fixing.
-    $tempScript = Join-Path $env:TEMP "windeploy_winutil_$([guid]::NewGuid().ToString('N')).ps1"
+    # LogDir is owned by SYSTEM but inherits ProgramData permissions so the
+    # user-session child can write here too.
+    if (-not (Test-Path $WD.LogDir)) {
+        New-Item -ItemType Directory -Path $WD.LogDir -Force | Out-Null
+    }
+    $childLog  = Join-Path $WD.LogDir "winutil-child-$id.log"
+    $childMeta = Join-Path $WD.LogDir "winutil-child-$id.meta.json"
+
+    $tempScript = Join-Path $env:TEMP "windeploy_winutil_$id.ps1"
     try {
-        $escapedPreset = $presetPath -replace "'","''"
-        $scriptBody = @"
-`$ErrorActionPreference = 'Continue'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-Write-Host '[WinDeploy] Downloading WinUtil bootstrap script...'
-`$winutilSrc = Invoke-RestMethod 'https://christitus.com/win'
-
-# Auto-close hook: after Invoke-WinUtilAutoRun returns, give the UI a few
-# seconds to settle, then close the form on its dispatcher thread so
-# ShowDialog() returns and powershell.exe exits cleanly.
-`$replacement = 'Invoke-WinUtilAutoRun; Start-Sleep -Seconds 3; try { `$sync["Form"].Dispatcher.Invoke([action]{ `$sync["Form"].Close() }) } catch {}'
-`$pattern     = '(?<!function )Invoke-WinUtilAutoRun(?!\w)'
-
-`$patched = [regex]::Replace(`$winutilSrc, `$pattern, `$replacement)
-`$hits    = ([regex]::Matches(`$winutilSrc, `$pattern)).Count
-Write-Host "[WinDeploy] Auto-close patch applied to `$hits call site(s)."
-
-if (`$hits -lt 1) {
-    Write-Host '[WinDeploy] WARNING: patch matched 0 sites -- running headless (-Noui) inline so the GUI cannot hang.'
-    & ([scriptblock]::Create(`$winutilSrc)) -Config '$escapedPreset' -Run -Noui
-    Write-Host '[WinDeploy] WinUtil (headless inline) exited.'
-    exit 0
-}
-
-Write-Host '[WinDeploy] Launching WinUtil with Standard preset...'
-& ([scriptblock]::Create(`$patched)) -Config '$escapedPreset' -Run
-Write-Host '[WinDeploy] WinUtil exited.'
-"@
-        [System.IO.File]::WriteAllText($tempScript, $scriptBody,
-            [System.Text.Encoding]::UTF8)
+        $body = Get-WinUtilChildScriptBody -PresetPath $presetPath -ChildLog $childLog `
+                                            -ChildMeta $childMeta -Mode 'GUI-AutoClose'
+        [System.IO.File]::WriteAllText($tempScript, $body, [System.Text.Encoding]::UTF8)
         Write-LogInfo "WinUtil launcher script: $tempScript"
+        Write-LogInfo "WinUtil child log:       $childLog"
+        Write-LogInfo "WinUtil child meta:      $childMeta"
 
         $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$tempScript`""
 
-        # Try launching in the logged-in user's session so WinUtil GUI
-        # AND its console output are visible on the desktop.
         Write-LogInfo 'Attempting to launch WinUtil in user desktop session (GUI + console)...'
         $result = Start-ProcessInUserSession -CommandLine $cmdLine -TimeoutMs $timeoutMs
 
         if ($null -eq $result) {
             Write-LogInfo 'No user session - falling back to headless (-Noui) mode.'
-            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -TimeoutMs $timeoutMs
+            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -ChildLog $childLog `
+                                            -ChildMeta $childMeta -TimeoutMs $timeoutMs
         } elseif ($result -eq $false) {
             Write-LogWarning 'GUI launcher timed out -- retrying once with headless (-Noui) mode.'
-            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -TimeoutMs $timeoutMs
+            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -ChildLog $childLog `
+                                            -ChildMeta $childMeta -TimeoutMs $timeoutMs
         }
     } catch {
         Write-LogWarning "WinUtil run failed: $($_.Exception.Message)"
         Write-LogWarning 'Continuing with direct registry tweaks.'
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value "exception: $($_.Exception.Message)" } catch {}
     } finally {
         Remove-Item $tempScript -ErrorAction SilentlyContinue
+        Read-WinUtilChildOutcome -ChildLog $childLog -ChildMeta $childMeta -StageName $StageName
     }
 }
 
