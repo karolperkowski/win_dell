@@ -86,7 +86,9 @@ Stages must **not** call `Restart-Computer` directly — return `RebootRequired`
 
 ## Stage pipeline order
 
-`PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > RemoteAccess > WindowsUpdate > Cleanup`
+`TimeSync > PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > RemoteAccess > WindowsUpdate > Cleanup`
+
+`TimeSync` runs **first** because every downstream stage (TLS handshakes for winget, Windows Update token validation, code-signing checks, Tailscale auth) misbehaves with a skewed clock. On failure it returns `RebootRequired` (capped at `TimeSync_RebootRetryCount` < 2 via `StageExtras`) before giving up with `Failed`, so a fresh network stack gets a second chance. `TimeSync` is in both `REBOOT_ALLOWED_STAGES` and `DRAIN_STAGES` for this reason.
 
 `RemoteAccess` runs after `InstallTailscale` so WinRM TrustedHosts can be scoped to the Tailscale CGNAT (`100.*`), and before `WindowsUpdate` so the machine remains remotely debuggable across the long update phase.
 

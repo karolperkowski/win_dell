@@ -54,18 +54,20 @@ irm ... | iex
             └─ triggers WinDeploy-Resume task ──→ Orchestrator runs as SYSTEM
 
 Stage pipeline:
-  1. PowerSettings              display/sleep never (AC power)
-  2. Debloat                    removes bloatware per data/bloatware.json
-  3. WinTweaks                  WinUtil preset + dark theme + Chrome + display
+  1. TimeSync                   timezone, w32time service, NTP peers, force
+                                resync with poll; reboot-retry fallback (cap 2)
+  2. PowerSettings              display/sleep never (AC power)
+  3. Debloat                    removes bloatware per data/bloatware.json
+  4. WinTweaks                  WinUtil preset + dark theme + Chrome + display
                                 scale 100% + NumLock on + Bing off + verbose
-                                login + Eastern Time + telemetry off + more
-  4. InstallDellSupportAssist
-  5. InstallDellPowerManager
-  6. InstallRustDesk            via WINGET_MANIFEST (pinned vendor URL + SHA256)
-  7. InstallTailscale           dual-condition wait: URL OR registration OR timeout
-  8. RemoteAccess               RDP + WinRM (TrustedHosts=100.*) + OpenSSH
-  9. WindowsUpdate              installs all updates, reboots as needed
- 10. Cleanup                    removes tasks, disables auto-logon, final reboot
+                                login + telemetry off + more
+  5. InstallDellSupportAssist
+  6. InstallDellPowerManager
+  7. InstallRustDesk            via WINGET_MANIFEST (pinned vendor URL + SHA256)
+  8. InstallTailscale           dual-condition wait: URL OR registration OR timeout
+  9. RemoteAccess               RDP + WinRM (TrustedHosts=100.*) + OpenSSH
+ 10. WindowsUpdate              installs all updates, reboots as needed
+ 11. Cleanup                    removes tasks, disables auto-logon, final reboot
 
 After each reboot: WinDeploy-Resume task fires → Orchestrator resumes
 After each logon:  WinDeploy-Monitor task fires → progress window reappears
@@ -97,21 +99,25 @@ win_dell/
 │   ├── Orchestrator.ps1     master controller — runs stages, auto-snapshots on failure
 │   ├── Monitor.ps1          WPF progress window + Tailscale QR + auto-snapshot pointer
 │   ├── Notify.ps1           tray notification on completion (self-removing)
-│   ├── PowerSettings.ps1    stage 1
-│   ├── Debloat.ps1          stage 2
-│   ├── WinTweaks.ps1        stage 3
-│   ├── AppInstall.ps1       stages 4-6 (Dell SupportAssist, Power Manager, RustDesk)
-│   ├── Tailscale.ps1        stage 7
-│   ├── RemoteAccess.ps1     stage 8 (RDP + WinRM + OpenSSH)
-│   ├── WindowsUpdate.ps1    stage 9
-│   └── Cleanup.ps1          stage 10
+│   ├── Notify-Webhook.ps1   webhook notifications (Slack/Teams/etc.) for deploy events
+│   ├── TimeSync.ps1         stage 1 (timezone + w32time + NTP, reboot-retry capped)
+│   ├── PowerSettings.ps1    stage 2
+│   ├── Debloat.ps1          stage 3
+│   ├── WinTweaks.ps1        stage 4
+│   ├── AppInstall.ps1       stages 5-7 (Dell SupportAssist, Power Manager, RustDesk)
+│   ├── Tailscale.ps1        stage 8
+│   ├── RemoteAccess.ps1     stage 9 (RDP + WinRM + OpenSSH)
+│   ├── WindowsUpdate.ps1    stage 10 (drains via WUA COM + Dell Command|Update sweep)
+│   ├── DellCommandUpdate.ps1 helper invoked by WindowsUpdate for OEM BIOS/firmware/drivers
+│   └── Cleanup.ps1          stage 11
 │
 ├── config/
 │   ├── settings.json        all deployment configuration — edit this
 │   └── winutil-preset.json  WinUtil tweak IDs
 │
 ├── data/
-│   └── bloatware.json       safe/optional app removal lists
+│   ├── bloatware.json       safe/optional app removal lists
+│   └── profiles.json        deployment profile definitions (App selection bundles)
 │
 ├── docs/
 │   └── GPG-SETUP.md         how to generate and configure the GPG signing key
@@ -168,6 +174,13 @@ Edit `config/settings.json`:
 
 | Key | Default | Effect |
 |---|---|---|
+| `Stages.TimeSync.Timezone` | `"Eastern Standard Time"` | Passed to `tzutil /s`. Any name from `tzutil /l` is valid. |
+| `Stages.TimeSync.NtpServers` | `["time.google.com","time.cloudflare.com","time.windows.com","pool.ntp.org"]` | First-match-wins peer list. Each is configured with `0x9` (SpecialInterval \| Client). |
+| `Stages.TimeSync.ClearRealTimeIsUniversal` | `true` | Clears `HKLM\...\TimeZoneInformation\RealTimeIsUniversal` so Windows reads the BIOS clock as local time (Dell ships BIOS=local). Set `false` only on dual-boot machines that share UTC with Linux. |
+| `Stages.TimeSync.MaxRebootRetries` | `2` | If verification fails (Source still `Local CMOS Clock` after polling), TimeSync returns `RebootRequired` up to this many times before returning `Failed`. |
+| `Stages.TimeSync.NetworkWaitSeconds` | `120` | How long to wait for `Resolve-DnsName` to succeed against an NTP peer before attempting the first resync. |
+| `Stages.TimeSync.VerifyTimeoutSeconds` | `120` | Total budget for the resync+poll loop (split across `ResyncAttempts`). |
+| `Stages.TimeSync.ResyncAttempts` | `5` | Number of `w32tm /resync /rediscover` calls; each is followed by a `/query /status` poll until Source flips off the local clock. |
 | `WinTweaks.RunWinUtil` | `true` | Run WinUtil Pass 1 (preset apply) before the direct registry tweaks in Pass 2. Set `false` to run only Pass 2. |
 | `Tailscale.AuthKey` | `""` | Pre-auth key from `login.tailscale.com/admin/settings/keys`. When non-empty, registers via `--authkey` and skips the QR/browser flow. Recommended for unattended deploys. |
 | `Tailscale.QrTimeoutMinutes` | `30` | How long the QR registration wait loop runs before the stage gives up. |
@@ -185,7 +198,6 @@ Edit `config/settings.json`:
 | NumLock on | Applied to current and default user hive |
 | Bing search removed | Start menu Bing search disabled |
 | Verbose login | Shows user name on login screen |
-| Timezone | Eastern Standard Time (New York) |
 | Telemetry | AllowTelemetry = 0 (both HKLM paths) |
 | Activity history | Disabled |
 | Location tracking | Denied |
@@ -235,6 +247,9 @@ Manifest signing uses GPG. See `docs/GPG-SETUP.md`. GPG is currently configured 
 | Test machine running months-old code | `bootstrap.ps1` re-uses extracted repo; only `install.ps1` pulls from GitHub | Fixed: `install.ps1` writes `VERSION` stamp; bootstrap WARNS when VERSION is >7 days old; orchestrator logs VERSION on every startup |
 | Stale `LastError` for an already-retried stage | `Set-StageComplete` didn't clear it | Fixed: `Set-StageComplete` clears `LastError` when it matched the now-successful stage |
 | Sticky CI "INDEX.md out of date" failures | INDEX.md describes its own line count, but writing changes it | Fixed: pre-commit regenerates in a loop until `git diff` is empty (converges in 1-2 iterations) |
+| Machine wall clock wrong by the timezone offset on first boot | Old WinTweaks set `RealTimeIsUniversal=1`, making Windows interpret the BIOS clock (local time on Dells) as UTC | Fixed: registry value removed in WinTweaks; TimeSync clears any leftover value on every run |
+| `TimeSync` returns `Failed` with `Source='Local CMOS Clock'` | `w32tm /resync` returns when the request is dispatched, not after the sync completes; verification ran too early | Fixed: TimeSync now polls `/query /status` for up to `VerifyTimeoutSeconds`, retries `ResyncAttempts` times, and falls back to `RebootRequired` (capped at `MaxRebootRetries`) for a fresh network stack |
+| `TimeSync` succeeds but the clock never moves on a machine with a dead CMOS battery | Default `MaxPosPhaseCorrection` / `MaxNegPhaseCorrection` is 15h, so a multi-year skew is silently refused | Fixed: TimeSync sets both to `0xFFFFFFFF` (no limit) and restarts `w32time` before the first resync |
 
 ---
 

@@ -36,7 +36,7 @@ The non-negotiables for contributing to `win_dell`. Full context in [CLAUDE.md](
 ## Troubleshooting
 
 20. **First move when stuck**: `tools\Troubleshoot.ps1 -Action Status` writes a forensic snapshot to `<LogDir>\auto-snapshot-<timestamp>.txt`. The same script auto-fires on every failure / abort / watchdog-detected stall.
-21. **Hot-patch a single file** without a full reinstall: `tools\Troubleshoot.ps1 -Action Repair -Stage <name>` (Tailscale plugin shipped today; add new stages by extending `$Script:StagePlugins`).
+21. **Hot-patch a single file** without a full reinstall: `tools\Troubleshoot.ps1 -Action Repair -Stage <name>` (plugins ship for `TimeSync`, `InstallTailscale`, `WindowsUpdate`; add new stages by extending `$Script:StagePlugins`).
 22. **Refresh deployed code** = re-run the `install.ps1` one-liner. `bootstrap.ps1` alone does NOT pull from GitHub — it re-uses the extracted repo. `install.ps1` writes a `VERSION` stamp; `bootstrap.ps1` warns when VERSION is >7 days old.
 
 ## Git / CI
