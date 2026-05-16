@@ -241,6 +241,27 @@ function Build-Screen {
         [void]$sb.AppendLine('')
     }
 
+    # Auto-snapshot pointer (written by tools/Troubleshoot.ps1 on failure/stall).
+    # Surfacing this here means the operator immediately sees that a forensic
+    # dump exists - no log-spelunking needed.
+    $snapshotPointer = "$DEPLOY_ROOT\Logs\latest-snapshot.path"
+    if (Test-Path $snapshotPointer) {
+        try {
+            $snapshotPath = (Get-Content $snapshotPointer -Raw -ErrorAction Stop).Trim()
+            if ($snapshotPath -and (Test-Path $snapshotPath)) {
+                $snapAge = (Get-Date) - (Get-Item $snapshotPath).LastWriteTime
+                # Only show if recent (< 24h) so old runs don't clutter the UI.
+                if ($snapAge.TotalHours -lt 24) {
+                    [void]$sb.AppendLine('  AUTO-SNAPSHOT (forensic dump)')
+                    [void]$sb.AppendLine('  ' + ('-' * 52))
+                    [void]$sb.AppendLine("  $snapshotPath")
+                    [void]$sb.AppendLine(('  written {0:N0} min ago' -f $snapAge.TotalMinutes))
+                    [void]$sb.AppendLine('')
+                }
+            }
+        } catch { }
+    }
+
     # Recent activity
     [void]$sb.AppendLine('  RECENT ACTIVITY')
     [void]$sb.AppendLine('  ' + ('-' * 52))

@@ -342,11 +342,49 @@ function Assert-AutoLogonSafetyTask {
 # for more than 4 hours. Prevents a hung stage from locking the machine.
 # ---------------------------------------------------------------------------
 function Assert-WatchdogTask {
-    $existing = Get-ScheduledTask -TaskName $Script:TASK_WATCHDOG -ErrorAction SilentlyContinue
-    if ($existing) { return }   # Only register once
+    # Note: we always rewrite watchdog.ps1 even if the scheduled task already
+    # exists - the file contents evolve (e.g. added stale-stage snapshotting)
+    # and the existing-task short-circuit used to leave deployed machines
+    # running stale watchdog logic. Register-ScheduledTask -Force handles
+    # the idempotent task update at the bottom of this function.
 
     $watchdogScript = @'
-# WinDeploy Watchdog - kills hung orchestrator processes
+# WinDeploy Watchdog - two concerns:
+#   1. Hard kill: any Orchestrator.ps1 process older than 4 hours is hung.
+#   2. Soft alert (stale stage): task_resume.log has not grown in 20+ minutes
+#      while CurrentStage is something other than WindowsUpdate (which can
+#      legitimately appear silent during USO scans/downloads). Snapshot
+#      state but do NOT kill - the operator can decide.
+# Both paths fire tools\Troubleshoot.ps1 -Action Status first so a forensic
+# dump is always written next to the logs.
+$ErrorActionPreference = 'Continue'
+$LogDir       = 'C:\ProgramData\WinDeploy\Logs'
+$EarlyLog     = Join-Path $LogDir 'early.log'
+$ResumeLog    = Join-Path $LogDir 'task_resume.log'
+$Troubleshoot = 'C:\ProgramData\WinDeploy\repo\tools\Troubleshoot.ps1'
+$StateFile    = 'C:\ProgramData\WinDeploy\state.json'
+
+function Write-WatchdogLine {
+    param([string]$Msg)
+    [System.IO.File]::AppendAllText(
+        $EarlyLog,
+        "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WATCHDOG] $Msg`r`n",
+        [System.Text.Encoding]::UTF8)
+}
+
+function Invoke-Snapshot {
+    param([string]$Reason)
+    if (-not (Test-Path $Troubleshoot)) { return }
+    try {
+        & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File $Troubleshoot -Action Status -Reason $Reason 2>&1 | Out-Null
+        Write-WatchdogLine "Snapshot written (reason=$Reason)."
+    } catch {
+        Write-WatchdogLine "Snapshot failed (reason=$Reason): $($_.Exception.Message)"
+    }
+}
+
+# --- 1. Hard kill old orchestrators ---
 $maxAgeHours = 4
 $procs = Get-WmiObject Win32_Process |
     Where-Object { $_.CommandLine -like '*Orchestrator.ps1*' }
@@ -354,9 +392,35 @@ foreach ($p in $procs) {
     $start = [System.Management.ManagementDateTimeConverter]::ToDateTime($p.CreationDate)
     $age   = (Get-Date) - $start
     if ($age.TotalHours -gt $maxAgeHours) {
-        $log = 'C:\ProgramData\WinDeploy\Logs\early.log'
-        [System.IO.File]::AppendAllText($log, "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] [WATCHDOG] Killing hung process PID $($p.ProcessId) (age: $([int]$age.TotalHours)h)`r`n", [System.Text.Encoding]::UTF8)
+        Write-WatchdogLine "Killing hung process PID $($p.ProcessId) (age: $([int]$age.TotalHours)h)"
+        Invoke-Snapshot "watchdog-kill-PID$($p.ProcessId)"
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# --- 2. Stale-stage alert ---
+if ((Test-Path $ResumeLog) -and (Test-Path $StateFile)) {
+    try {
+        $state = Get-Content $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch { $state = $null }
+
+    $current = if ($state) { $state.CurrentStage } else { '' }
+    $deployDone = if ($state) { [bool]$state.DeployComplete } else { $true }
+    if (-not $deployDone -and $current -and $current -ne 'WindowsUpdate' -and $current -ne 'Cleanup') {
+        $idleMin = ((Get-Date) - (Get-Item $ResumeLog).LastWriteTime).TotalMinutes
+        if ($idleMin -ge 20) {
+            $sentinel = Join-Path $LogDir "watchdog-stale-$current.flag"
+            if (-not (Test-Path $sentinel)) {
+                Write-WatchdogLine "Stage '$current' appears stalled ($([int]$idleMin) min since last log write). Snapshotting."
+                Invoke-Snapshot "watchdog-stale-$current"
+                # Sentinel file so we don't snapshot every 30 min for the same stall.
+                "$(Get-Date -f 'o')" | Set-Content -Path $sentinel -Encoding UTF8
+            }
+        } else {
+            # Stage is progressing - clear any old sentinel.
+            Get-ChildItem -Path $LogDir -Filter 'watchdog-stale-*.flag' -EA SilentlyContinue |
+                Remove-Item -Force -EA SilentlyContinue
+        }
     }
 }
 '@

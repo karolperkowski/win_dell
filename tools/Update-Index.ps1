@@ -58,6 +58,7 @@ $Annotations = @{
     '.github/workflows/ci.yml'      = 'CI pipeline: lint, validate tasks, sign manifest (sequential)'
     'apps/.gitkeep'                 = 'Placeholder -- apps/ holds downloaded installers at runtime'
     'tools/Update-Index.ps1'        = 'Generates INDEX.md file inventory (this script)'
+    'tools/Troubleshoot.ps1'        = 'Status / Diagnose / Repair entry point - auto-fired by Orchestrator + Watchdog'
     '.githooks/pre-commit'          = 'Git pre-commit shim -- calls pre-commit.ps1'
     '.githooks/pre-commit.ps1'      = 'Pre-commit hook logic -- regenerates and stages INDEX.md'
 }

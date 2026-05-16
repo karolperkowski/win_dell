@@ -164,6 +164,34 @@ try {
     Write-BootstrapLog "Source repo: $RepoRoot"
     Write-BootstrapLog "OS: $($(Get-CimInstance Win32_OperatingSystem).Caption)"
 
+    # Step 2b - Version drift check. install.ps1 stamps a VERSION file with the
+    # deployed git SHA. If it is more than 7 days old, warn loudly so the
+    # operator knows to re-run install.ps1 before debugging anything else.
+    # This is the single biggest lesson from the 2026-05-16 session: stale
+    # deployed code looks identical to genuine bugs and burns hours.
+    $versionFile = Join-Path $RepoRoot 'VERSION'
+    if (Test-Path $versionFile) {
+        try {
+            $versionLines = Get-Content $versionFile
+            $extractedLine = $versionLines | Where-Object { $_ -like 'ExtractedAt:*' } | Select-Object -First 1
+            $shaLine       = $versionLines | Where-Object { $_ -like 'Sha:*' }         | Select-Object -First 1
+            Write-BootstrapLog "Deployed code: $shaLine"
+            Write-BootstrapLog "               $extractedLine"
+            if ($extractedLine) {
+                $extractedAt = [datetime]($extractedLine -replace '^ExtractedAt:\s*','')
+                $ageDays = ((Get-Date) - $extractedAt).TotalDays
+                if ($ageDays -gt 7) {
+                    Write-BootstrapLog "*** STALE CODE WARNING: deployed VERSION is $([int]$ageDays) days old. ***" 'WARN'
+                    Write-BootstrapLog '*** Re-run install.ps1 to refresh before assuming bugs are in current main. ***' 'WARN'
+                }
+            }
+        } catch {
+            Write-BootstrapLog "VERSION read failed (non-fatal): $($_.Exception.Message)"
+        }
+    } else {
+        Write-BootstrapLog 'VERSION file absent - deployed code predates version stamping.'
+    }
+
     # Step 3 - Copy repo to stable local path FIRST so all script paths are valid
     $localRepo = Copy-RepoToDeployRoot
 

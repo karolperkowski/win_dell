@@ -217,6 +217,7 @@ function Invoke-HardcodedPathCheck {
         'Orchestrator.ps1'  # early.log path needed before Config loads
         'Tailscale.ps1'     # deploy root needed for JSON output
         'Cleanup.ps1'       # completion report path
+        'Troubleshoot.ps1'  # must work even when Config.psm1 cannot load (degraded state)
     )
 
     $psFiles = Get-ChildItem $RepoRoot -Recurse -Include '*.ps1','*.psm1' |

@@ -314,6 +314,30 @@ function Install-RepoFromGitHub {
     # Move the inner folder to the final destination
     Move-Item -Path $innerFolder.FullName -Destination $DestDir -Force
 
+    # Stamp a VERSION file so the orchestrator can log + bootstrap can detect
+    # drift against origin/main. Best-effort: failure here is non-fatal.
+    try {
+        $remoteSha = ''
+        try {
+            $headInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/commits/$Branch" `
+                                            -Headers @{ 'User-Agent' = 'windeploy-installer' } -UseBasicParsing -ErrorAction Stop
+            if ($headInfo.sha) { $remoteSha = $headInfo.sha }
+        } catch {
+            Write-InstallLog "VERSION stamp: could not query remote SHA ($($_.Exception.Message)). Stamping timestamp only." WARN
+        }
+        $versionLines = @(
+            "Sha:        $remoteSha"
+            "Branch:     $Branch"
+            "ExtractedAt: $(Get-Date -Format 'o')"
+            "ZipUrl:     $ZipUrl"
+        )
+        [System.IO.File]::WriteAllText((Join-Path $DestDir 'VERSION'),
+            ($versionLines -join "`r`n") + "`r`n",
+            (New-Object System.Text.UTF8Encoding $false))
+    } catch {
+        Write-InstallLog "VERSION stamp failed (non-fatal): $($_.Exception.Message)" WARN
+    }
+
     # Clean up temp files
     Remove-Item $zipPath      -Force -ErrorAction SilentlyContinue
     Remove-Item $extractTemp  -Force -Recurse -ErrorAction SilentlyContinue

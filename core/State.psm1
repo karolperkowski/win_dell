@@ -279,6 +279,17 @@ function Set-StageComplete {
             $state['FailedStages'] = @($state['FailedStages'] | Where-Object { $_ -ne $StageName })
         }
 
+        # Clear LastError if it was attributed to this stage: a subsequent
+        # success obsoletes the stale error string. Without this clearing,
+        # the Monitor + status snapshots keep showing an old failure message
+        # for a stage that has since succeeded (observed 2026-05-16 with
+        # InstallRustDesk showing a stale -1978335230 error after a retry).
+        if ($state['LastErrorStage'] -eq $StageName) {
+            $state['LastError']          = $null
+            $state['LastErrorStage']     = $null
+            $state['LastErrorTimestamp'] = $null
+        }
+
         # Advance current stage pointer
         $idx = $Script:STAGE_ORDER.IndexOf($StageName)
         if ($idx -ge 0 -and $idx -lt (@($Script:STAGE_ORDER).Count - 1)) {

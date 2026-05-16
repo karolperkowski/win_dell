@@ -54,6 +54,20 @@ $Script:CoreDir   = $PSScriptRoot
 Write-Early "RepoRoot : $Script:RepoRoot"
 Write-Early "CoreDir  : $Script:CoreDir"
 
+# Log the deployed code version so future log forensics can immediately tell
+# which commit produced the behaviour observed below. install.ps1 writes
+# VERSION at extract time; bootstrap.ps1 separately warns on drift.
+$versionFile = Join-Path $Script:RepoRoot 'VERSION'
+if (Test-Path $versionFile) {
+    try {
+        foreach ($line in (Get-Content $versionFile -ErrorAction Stop)) {
+            if ($line -and -not $line.StartsWith('#')) { Write-Early "VERSION  $line" }
+        }
+    } catch { Write-Early "VERSION  read failed: $($_.Exception.Message)" }
+} else {
+    Write-Early 'VERSION  (file absent - deployed code predates version stamping)'
+}
+
 try {
 
 # Resilience module first — validates dirs, state, and tasks before anything else
@@ -107,6 +121,26 @@ $Script:STAGE_SCRIPTS = [ordered]@{
 
 $Script:REBOOT_ALLOWED_STAGES    = $Script:WD.RebootAllowedStages
 $Script:MAX_CONSECUTIVE_FAILURES = 3
+$Script:TROUBLESHOOT_PS1         = Join-Path $Script:RepoRoot 'tools\Troubleshoot.ps1'
+
+function Invoke-AutoSnapshot {
+    <#
+    Fire-and-forget call to tools/Troubleshoot.ps1 -Action Status. Used by
+    failure paths and the watchdog so a forensic dump is always available
+    next to the logs without the operator having to re-derive state.
+
+    Failures here are swallowed - we are usually already in an error path
+    and must not mask the real error.
+    #>
+    param([string]$Reason = '')
+    if (-not (Test-Path $Script:TROUBLESHOOT_PS1)) { return }
+    try {
+        $psArgs = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+                    '-File', $Script:TROUBLESHOOT_PS1, '-Action', 'Status')
+        if ($Reason) { $psArgs += @('-Reason', $Reason) }
+        & powershell.exe @psArgs 2>&1 | Out-Null
+    } catch { }
+}
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -475,6 +509,7 @@ Initialize-Logger -Stage 'Orchestrator'
                     Write-LogError 'Maximum consecutive failures reached. Aborting deployment.'
                     Write-LogError 'Review logs at C:\ProgramData\WinDeploy\Logs and fix the issue.'
                     Write-LogError 'Re-run Orchestrator.ps1 manually once the issue is resolved.'
+                    Invoke-AutoSnapshot -Reason "abort-${stageName}"
                     Close-Logger -FinalStatus 'FAILED'
                     exit 1
                 }
@@ -490,6 +525,7 @@ Initialize-Logger -Stage 'Orchestrator'
                     Set-StageComplete -StageName $stageName
                 } else {
                     Write-LogError "Halting until the failure is resolved. Reboot will retry this stage."
+                    Invoke-AutoSnapshot -Reason "halt-${stageName}"
                     Close-Logger -FinalStatus 'FAILED'
                     exit 1
                 }
@@ -527,5 +563,6 @@ Initialize-Logger -Stage 'Orchestrator'
 } catch {
     Write-Early "ORCHESTRATOR FATAL: $($_.Exception.Message)"
     Write-Early "Line: $($_.InvocationInfo.ScriptLineNumber)"
+    try { Invoke-AutoSnapshot -Reason 'orchestrator-fatal' } catch { }
     exit 1
 }

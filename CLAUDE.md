@@ -98,6 +98,37 @@ When `--source winget` still cannot get a package through (corporate proxy inter
 
 ---
 
+## Troubleshooting (`tools/Troubleshoot.ps1`)
+
+Single entry point for diagnostics and recovery. Three actions:
+
+```powershell
+tools\Troubleshoot.ps1 -Action Status
+tools\Troubleshoot.ps1 -Action Diagnose -Stage InstallTailscale
+tools\Troubleshoot.ps1 -Action Repair   -Stage InstallTailscale
+```
+
+- **Status** is always safe (read-only). It writes a snapshot to `<LogDir>\auto-snapshot-<timestamp>[-<reason>].txt` containing state.json, tailscale.json, tail of task_resume.log, the latest per-stage log, live `tailscale status`, and the deployed VERSION. It also drops a pointer at `<LogDir>\latest-snapshot.path` which Monitor.ps1 surfaces in its UI.
+- **Diagnose** runs a stage-specific read-only deep-dive.
+- **Repair** runs a stage-specific destructive recovery. Tailscale's repair stops the resume task, kills hung `tailscale up` processes, hot-patches `core/Tailscale.ps1` from `main`, and restarts the resume task.
+
+To add a new stage, extend `$Script:StagePlugins` in `tools/Troubleshoot.ps1` with a hashtable containing `Diagnose` and `Repair` scriptblocks.
+
+### Auto-triggers — when things go south
+
+`tools/Troubleshoot.ps1 -Action Status` is invoked automatically by:
+
+1. **Orchestrator outer catch** on any FATAL throw (reason: `orchestrator-fatal`).
+2. **Orchestrator halt path** when a stage fails and `ContinueOnError` is not set (reason: `halt-<stage>`).
+3. **Orchestrator abort path** when `MAX_CONSECUTIVE_FAILURES` is hit (reason: `abort-<stage>`).
+4. **Watchdog scheduled task** (every 30 min) before killing a >4h orchestrator (reason: `watchdog-kill-PID<n>`) and when it detects a stale stage — no `task_resume.log` activity for 20+ min while CurrentStage is neither `WindowsUpdate` nor `Cleanup` (reason: `watchdog-stale-<stage>`, idempotent via a sentinel file).
+
+### Version stamping
+
+`install.ps1` writes `<RepoDir>\VERSION` containing the commit SHA, branch, extract timestamp, and ZIP URL. The orchestrator logs every VERSION line at startup so log forensics can immediately tell which commit produced the observed behaviour. `bootstrap.ps1` warns loudly when the deployed VERSION is more than 7 days old — re-run `install.ps1` to refresh before assuming a bug is in current `main`.
+
+---
+
 ## WinUtil outcome legibility (WinTweaks Pass 1)
 
 The WinTweaks stage runs Chris Titus's WinUtil in Pass 1 against `config/winutil-preset.json`. Pass 2 (direct registry tweaks) always runs regardless — so an empty/silent WinUtil run will still leave WinTweaks marked SUCCESS. To distinguish "WinUtil applied N tweaks" from "WinUtil silently did nothing", the child script writes a transcript and a structured meta JSON; the parent ingests both. **Always check these on a real-machine run before concluding WinUtil worked.**
