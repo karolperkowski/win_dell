@@ -47,6 +47,7 @@ $coreDir = $PSScriptRoot
 $repoRoot = Split-Path $coreDir -Parent
 
 Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
+Import-Module (Join-Path $coreDir 'Winget.psm1')  -DisableNameChecking -Force
 
 Initialize-Logger -Stage $StageName
 
@@ -223,61 +224,27 @@ function Invoke-MSIXInstall {
     Write-LogSuccess 'MSIX package added.'
 }
 
-function Find-WingetExe {
-    <#
-    Resolves the winget executable and patches $env:PATH with the UWP
-    dependency DLLs required when running as SYSTEM (STATUS_DLL_NOT_FOUND).
-    Returns the path to winget.exe, or 'winget.exe' if already on PATH.
-    #>
-    $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($wingetCmd) { return 'winget.exe' }
-
-    $wingetPath = Get-ChildItem `
-        'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe' `
-        -ErrorAction SilentlyContinue |
-        Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
-
-    if (-not $wingetPath) {
-        throw 'winget not found. winget ships with App Installer from the Microsoft Store.'
-    }
-
-    $depDirs = @(
-        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.VCLibs.140.00.UWPDesktop_*_x64__8wekyb3d8bbwe' `
-            -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
-        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.UI.Xaml.2.8_*_x64__8wekyb3d8bbwe' `
-            -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
-    ) | Where-Object { $_ }
-
-    if ($depDirs) {
-        $extraPaths = ($depDirs | ForEach-Object { $_.FullName }) -join ';'
-        $env:PATH   = "$extraPaths;$env:PATH"
-        Write-LogInfo "Added winget dependency paths: $extraPaths"
-    }
-
-    Write-LogInfo "winget found at: $($wingetPath.FullName)"
-    return $wingetPath.FullName
-}
-
 function Invoke-WingetInstall {
+    <#
+    Install a package by ID from the public winget source. --source winget
+    is mandatory because the msstore source's TLS certificate pinning fails
+    under SYSTEM context (exit 0x8A15005E = -1978335138, observed 2026-05-16
+    across RustDesk, Tailscale, and Chrome). Letting winget auto-pick the
+    source resolves to msstore and the deploy stalls.
+    #>
     param([string]$PackageId)
 
-    $wingetExe = Find-WingetExe
-    Write-LogInfo "Installing '$PackageId' via winget..."
-    & $wingetExe install `
-        --id $PackageId `
-        --silent `
-        --accept-package-agreements `
-        --accept-source-agreements `
-        --disable-interactivity `
-        2>&1
-
-    if ($LASTEXITCODE -in @(0, -1978335189)) {
-        # 0 = success, -1978335189 (0x8A15002B) = already installed
-        Write-LogSuccess "winget install '$PackageId' succeeded (exit $LASTEXITCODE)."
-    } else {
-        throw "winget install '$PackageId' failed (exit $LASTEXITCODE)."
+    $result = Invoke-WingetCli -Description "winget install '$PackageId'" -ArgList @(
+        'install',
+        '--id', $PackageId,
+        '--source', 'winget',
+        '--silent',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--disable-interactivity'
+    )
+    if (-not $result.Success) {
+        throw "winget install '$PackageId' failed (exit $($result.ExitCode) -- $($result.Meaning))."
     }
 }
 
@@ -335,20 +302,18 @@ ManifestVersion: 1.6.0
     [System.IO.File]::WriteAllText($manifestPath, $yaml, [System.Text.UTF8Encoding]::new($false))
     Write-LogInfo "Generated winget manifest: $manifestPath"
 
-    $wingetExe = Find-WingetExe
-    Write-LogInfo "Installing '$id' $version via winget --manifest..."
-    & $wingetExe install `
-        --manifest $manifestPath `
-        --silent `
-        --accept-package-agreements `
-        --accept-source-agreements `
-        --disable-interactivity `
-        2>&1
-
-    if ($LASTEXITCODE -in @(0, -1978335189)) {
-        Write-LogSuccess "winget --manifest install of '$id' succeeded (exit $LASTEXITCODE)."
-    } else {
-        throw "winget --manifest install of '$id' failed (exit $LASTEXITCODE). Manifest: $manifestPath"
+    # Manifest installs bypass source resolution entirely - no --source needed.
+    # winget downloads from the URL in the manifest and verifies SHA256.
+    $result = Invoke-WingetCli -Description "winget --manifest install '$id' $version" -ArgList @(
+        'install',
+        '--manifest', $manifestPath,
+        '--silent',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--disable-interactivity'
+    )
+    if (-not $result.Success) {
+        throw "winget --manifest install of '$id' failed (exit $($result.ExitCode) -- $($result.Meaning)). Manifest: $manifestPath"
     }
 }
 

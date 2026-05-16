@@ -80,6 +80,11 @@ try {
     Write-Early 'Logging.psm1 loaded OK'
 } catch { Write-Early "FATAL: Logging.psm1 failed - $($_.Exception.Message)"; exit 1 }
 
+try {
+    Import-Module (Join-Path $Script:CoreDir 'Winget.psm1')  -DisableNameChecking -Force
+    Write-Early 'Winget.psm1 loaded OK'
+} catch { Write-Early "Winget.psm1 failed (non-fatal): $($_.Exception.Message)" }
+
 # Load webhook notification helper (non-fatal if missing)
 $webhookScript = Join-Path $Script:CoreDir 'Notify-Webhook.ps1'
 if (Test-Path $webhookScript) { . $webhookScript }
@@ -368,6 +373,37 @@ Initialize-Logger -Stage 'Orchestrator'
     Write-LogSection 'Stage Status Summary'
     Get-StageStatus | ForEach-Object {
         Write-LogInfo ("  {0,-30} {1}" -f $_.Stage, $_.Status)
+    }
+
+    # ---------------------------------------------------------------------------
+    # Winget source pre-flight
+    # ---------------------------------------------------------------------------
+    # Before any install stage runs, confirm winget can reach the community
+    # source. A TLS / cert / SYSTEM-context issue here would otherwise cause
+    # every install stage to fail in <1s with cryptic exit codes, burning the
+    # consecutive-failure budget. This single check surfaces the cause once.
+    if (Get-Command Test-WingetSourceHealth -ErrorAction SilentlyContinue) {
+        Write-LogSection 'Winget pre-flight'
+        try {
+            $wgHealth = Test-WingetSourceHealth -SourceName 'winget'
+            if ($wgHealth.Healthy) {
+                Write-LogSuccess "winget source 'winget' is healthy."
+            } else {
+                Write-LogWarning ("winget source 'winget' is NOT healthy: exit={0} -- {1}. Install stages will likely fail." -f `
+                    $wgHealth.ExitCode, $wgHealth.Meaning)
+            }
+            try {
+                Set-StageExtra -StageName 'Orchestrator' -Key 'WingetSourceHealthy' -Value $wgHealth.Healthy
+                Set-StageExtra -StageName 'Orchestrator' -Key 'WingetSourceExitCode' -Value $wgHealth.ExitCode
+                Set-StageExtra -StageName 'Orchestrator' -Key 'WingetSourceMeaning' -Value $wgHealth.Meaning
+            } catch {
+                Write-LogWarning "Could not write winget pre-flight to StageExtras: $($_.Exception.Message)"
+            }
+        } catch {
+            Write-LogWarning "winget pre-flight threw: $($_.Exception.Message)"
+        }
+    } else {
+        Write-LogWarning 'Winget.psm1 not loaded - skipping winget pre-flight.'
     }
 
     # ---------------------------------------------------------------------------

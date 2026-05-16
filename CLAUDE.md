@@ -23,7 +23,7 @@ Target hardware: Dell laptops/desktops, Windows 10 21H2+ and Windows 11 22H2+.
 ## Repo layout
 
 | File | Role |
-|---|---|
+| --- | --- |
 | `install.ps1` | `irm\|iex` entry point -- downloads repo, verifies manifest, launches bootstrap |
 | `bootstrap.ps1` | Sets up scheduled tasks, state, launches monitor + orchestrator |
 | `core/Orchestrator.ps1` | Master controller -- runs stages in order, handles reboots |
@@ -34,7 +34,7 @@ Target hardware: Dell laptops/desktops, Windows 10 21H2+ and Windows 11 22H2+.
 ## PowerShell 5.1 rules -- enforce on every change
 
 | Forbidden | PS 5.1 alternative |
-|---|---|
+| --- | --- |
 | `$x ?? $y` | `if ($x) { $x } else { $y }` |
 | `$x?.Prop` | `if ($x) { $x.Prop }` |
 | `??=` | `if (-not $x) { $x = $y }` |
@@ -85,6 +85,16 @@ Use `Write-LogInfo`, `Write-LogSuccess`, `Write-LogWarning`, `Write-LogError` fr
 ## App install types (`AppInstall.ps1`)
 
 Use `WINGET` when the package exists in the public `winget-pkgs` source. Use `WINGET_MANIFEST` when it doesn't (removed, private vendor, or you want to pin a specific URL). `WINGET_MANIFEST` generates a singleton YAML at install time from `PackageIdentifier`/`PackageVersion`/`Architecture`/`ManifestInstallerType`/`DownloadUrl`/`InstallerSha256` and hands it to `winget install --manifest` — winget still owns the download, SHA256 verification, silent handling, and exit codes. To bump a version, run `tools/Get-WingetManifestFields.ps1 -Url <new-url> -PackageIdentifier <id> -PackageVersion <ver>` to get the new SHA256 and paste it into `config/settings.json`. Never fall back to `MSI`/`EXE` when a `WINGET_MANIFEST` alternative works — we want one CLI owning all installs.
+
+**Winget under SYSTEM context.** Microsoft does not officially support winget in the system context. We invoke it from SYSTEM anyway via the scheduled-task-driven orchestrator, with three hardening rules:
+
+1. **Always pass `--source winget`.** The msstore source uses TLS certificate pinning that fails under SYSTEM with exit `-1978335138` (`0x8A15005E` = `APPINSTALLER_CLI_ERROR_PINNED_CERTIFICATE_MISMATCH`). Observed 2026-05-16 on RustDesk + Tailscale + Chrome simultaneously. Letting winget auto-pick the source resolves to msstore and every install fails in <1s. `WINGET_MANIFEST` installs (`winget install --manifest`) bypass source resolution entirely, so they don't need `--source`.
+2. **Never call winget inline with `2>&1` redirection** in a script that has a `return` statement. The redirected stdout flows into the script's return pipeline and turns `@{Status='Failed'}` into `Object[]`, which the orchestrator rejects with "Stage returned invalid result (type: Object[])". Use `Invoke-WingetCli` from [core/Winget.psm1](core/Winget.psm1) — it captures output into a local variable so nothing leaks.
+3. **Inspect winget exits via `Get-WingetExitMeaning`.** Raw codes like `-1978335138` are unreadable in logs. `core/Winget.psm1` maps the known codes to human-readable causes and writes them to `StageExtras`. Add new codes to `$Script:WINGET_EXIT_MEANINGS` as they show up in the wild.
+
+The orchestrator runs `Test-WingetSourceHealth` once per deploy before any install stage and writes the result to `StageExtras.Orchestrator_WingetSource*`. If unhealthy, the install stages will fail individually but the cause is captured in a single legible place.
+
+When `--source winget` still cannot get a package through (corporate proxy intercepting TLS, custom EDR re-signing certs), the escape hatches are: (a) move the package to `WINGET_MANIFEST` with a vendor URL + pinned SHA256, or (b) launch winget in the logged-in user's session via the same `Start-ProcessInUserSession` helper WinTweaks uses for WinUtil.
 
 ---
 

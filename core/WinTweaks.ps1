@@ -37,6 +37,7 @@ $repoRoot = Split-Path $coreDir -Parent
 Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
 Import-Module (Join-Path $coreDir 'Config.psm1')  -DisableNameChecking -Force
 Import-Module (Join-Path $coreDir 'State.psm1')   -DisableNameChecking -Force
+Import-Module (Join-Path $coreDir 'Winget.psm1')  -DisableNameChecking -Force
 $WD = Get-WDConfig
 Initialize-Logger -Stage $StageName
 
@@ -737,37 +738,6 @@ function Set-DisplayScale {
 function Install-WingetApps {
     Write-LogSection 'Winget app installs'
 
-    # Resolve winget path - not on PATH when running as SYSTEM
-    $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $wingetCmd) {
-        $wingetPath = Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe' -ErrorAction SilentlyContinue |
-                      Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
-        if ($wingetPath) {
-            Write-LogInfo "winget found at: $($wingetPath.FullName)"
-            $wingetExe = $wingetPath.FullName
-        } else {
-            Write-LogWarning 'winget not found - skipping app installs.'
-            Write-LogWarning 'winget ships with App Installer from the Microsoft Store.'
-            return
-        }
-    } else {
-        $wingetExe = 'winget.exe'
-    }
-
-    # When running as SYSTEM, winget's UWP dependencies are not on PATH
-    $depDirs = @(
-        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.VCLibs.140.00.UWPDesktop_*_x64__8wekyb3d8bbwe' -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
-        Get-ChildItem 'C:\Program Files\WindowsApps\Microsoft.UI.Xaml.2.8_*_x64__8wekyb3d8bbwe' -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
-    ) | Where-Object { $_ }
-
-    if ($depDirs) {
-        $extraPaths = ($depDirs | ForEach-Object { $_.FullName }) -join ';'
-        $env:PATH = "$extraPaths;$env:PATH"
-        Write-LogInfo "Added winget dependency paths: $extraPaths"
-    }
-
     # Load app list from config profile
     $profileName = 'Default'
     if ($Config['WinTweaks'] -and $Config['WinTweaks']['AppProfile']) {
@@ -793,23 +763,23 @@ function Install-WingetApps {
     }
 
     foreach ($app in $apps) {
-        Write-LogInfo "Installing $($app.Name) via winget..."
         try {
-            & $wingetExe install `
-                --id $app.Id `
-                --silent `
-                --accept-package-agreements `
-                --accept-source-agreements `
-                --disable-interactivity `
-                2>&1
-
-            if ($LASTEXITCODE -in @(0, -1978335189)) {
-                Write-LogSuccess "$($app.Name) installed (or already present)."
-            } else {
-                Write-LogWarning "$($app.Name) winget exit code: $LASTEXITCODE"
+            # --source winget required: msstore TLS cert pinning fails under SYSTEM
+            # (exit 0x8A15005E). See core/Winget.psm1.
+            $result = Invoke-WingetCli -Description "Install $($app.Name)" -ArgList @(
+                'install',
+                '--id', $app.Id,
+                '--source', 'winget',
+                '--silent',
+                '--accept-package-agreements',
+                '--accept-source-agreements',
+                '--disable-interactivity'
+            )
+            if (-not $result.Success) {
+                Write-LogWarning "$($app.Name) install did not succeed: $($result.Meaning)"
             }
         } catch {
-            Write-LogWarning "$($app.Name) install failed: $($_.Exception.Message)"
+            Write-LogWarning "$($app.Name) install threw: $($_.Exception.Message)"
         }
     }
 }
