@@ -85,3 +85,50 @@ Use `Write-LogInfo`, `Write-LogSuccess`, `Write-LogWarning`, `Write-LogError` fr
 ## App install types (`AppInstall.ps1`)
 
 Use `WINGET` when the package exists in the public `winget-pkgs` source. Use `WINGET_MANIFEST` when it doesn't (removed, private vendor, or you want to pin a specific URL). `WINGET_MANIFEST` generates a singleton YAML at install time from `PackageIdentifier`/`PackageVersion`/`Architecture`/`ManifestInstallerType`/`DownloadUrl`/`InstallerSha256` and hands it to `winget install --manifest` — winget still owns the download, SHA256 verification, silent handling, and exit codes. To bump a version, run `tools/Get-WingetManifestFields.ps1 -Url <new-url> -PackageIdentifier <id> -PackageVersion <ver>` to get the new SHA256 and paste it into `config/settings.json`. Never fall back to `MSI`/`EXE` when a `WINGET_MANIFEST` alternative works — we want one CLI owning all installs.
+
+---
+
+## WinUtil outcome legibility (WinTweaks Pass 1)
+
+The WinTweaks stage runs Chris Titus's WinUtil in Pass 1 against `config/winutil-preset.json`. Pass 2 (direct registry tweaks) always runs regardless — so an empty/silent WinUtil run will still leave WinTweaks marked SUCCESS. To distinguish "WinUtil applied N tweaks" from "WinUtil silently did nothing", the child script writes a transcript and a structured meta JSON; the parent ingests both. **Always check these on a real-machine run before concluding WinUtil worked.**
+
+**Files produced per WinTweaks run** (one pair per orchestrator invocation, kept for post-mortem):
+
+- `C:\ProgramData\WinDeploy\Logs\winutil-child-<guid>.log` — full transcript of the child PowerShell, including bundle download size, regex hit count, preset-vs-bundle ID diff, and exit code.
+- `C:\ProgramData\WinDeploy\Logs\winutil-child-<guid>.meta.json` — structured outcome record.
+
+**Verification commands** (run after WinTweaks has executed at least once):
+
+```powershell
+# All WinUtil sub-status from the latest state.
+Get-Content C:\ProgramData\WinDeploy\state.json -Raw |
+    ConvertFrom-Json |
+    Select-Object -ExpandProperty StageExtras |
+    Format-List WinTweaks_*
+
+# Most recent child transcript.
+Get-ChildItem C:\ProgramData\WinDeploy\Logs\winutil-child-*.log |
+    Sort-Object LastWriteTime |
+    Select-Object -Last 1 |
+    Get-Content
+
+# Summary lines in the main log.
+Select-String -Path C:\ProgramData\WinDeploy\Logs\windeploy.log `
+    -Pattern 'WinUtil outcome|Unknown preset|auto-close patch'
+```
+
+**`StageExtras` keys to inspect:**
+
+| Key | Healthy value | What it tells you |
+| --- | --- | --- |
+| `WinTweaks_WinUtilLaunchMode` | `gui-autoclose` | `headless-noui` = no user session; `gui-patch-miss-headless-fallback` = upstream renamed `Invoke-WinUtilAutoRun`, regex needs an update |
+| `WinTweaks_WinUtilAutoClosePatchHits` | `>= 1` | `0` means the regex matched no call sites — patched bundle was not used, headless `-Noui` ran instead |
+| `WinTweaks_WinUtilPresetIdCount` | matches the preset file length | Total IDs read from `config/winutil-preset.json` |
+| `WinTweaks_WinUtilKnownIdCount` | equal to `PresetIdCount` | IDs that exist in the live bundle |
+| `WinTweaks_WinUtilUnknownPresetIds` | empty array | Anything listed here was silently dropped by WinUtil — upstream renamed an ID and the preset needs refreshing |
+| `WinTweaks_WinUtilBundleIdCount` | several hundred (sanity) | If `0`, bundle-ID extraction regex failed — investigate the regex against the current bundle |
+| `WinTweaks_WinUtilExitReason` | `gui-exit-0` | Anything else (`headless-inline-exit-...`, `exception: ...`) tells you which fallback path ran |
+
+**To refresh the preset:** run WinUtil interactively (`irm https://christitus.com/win | iex` from an elevated PowerShell), tick the desired Tweaks/Features/Installs, File menu → **Export Preset**, and overwrite `config/winutil-preset.json`. WinUtil's exporter writes UTF-16 LE with BOM — the child reads via `[System.IO.File]::ReadAllText` which auto-detects BOM, so no manual conversion is needed. Both flat-array (`["WPFTweaksX",...]`) and nested-object (`{"WPFTweaks":[...],"WPFInstall":[...],"WPFFeature":[...]}`) formats are accepted.
+
+**Installs ownership:** installs (winget) are owned by `data/profiles.json` + `Install-WingetApps` in `WinTweaks.ps1`, not by WinUtil. If you re-export a preset, leave the WPFInstall section empty so installs flow through the path with idempotency, logging, and exit-code handling we control.

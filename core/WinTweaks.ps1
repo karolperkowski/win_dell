@@ -384,7 +384,14 @@ function Get-WinUtilChildScriptBody {
 
     return @"
 `$ErrorActionPreference = 'Continue'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
+
+# Prefer Tls12+Tls13. The string-flag parse + SChannel assignment can fail on
+# older Windows builds where Tls13 is not negotiable - fall back to Tls12.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
+} catch {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 `$childLog     = '$escapedLog'
 `$childMeta    = '$escapedMeta'
@@ -420,8 +427,10 @@ try {
     `$meta.BundleIdCount = `$bundleIds.Count
     Write-Host ("[WinDeploy] Bundle declares {0} IDs." -f `$bundleIds.Count)
 
-    # Parse preset - accept flat-array or nested {WPFTweaks,WPFInstall,WPFFeature}
-    `$presetRaw = Get-Content -Raw -Path `$presetPath -Encoding UTF8
+    # Parse preset - accept flat-array or nested {WPFTweaks,WPFInstall,WPFFeature}.
+    # ReadAllText (no encoding arg) auto-detects BOM, so a fresh WinUtil export
+    # saved as UTF-16 LE survives without manual conversion.
+    `$presetRaw = [System.IO.File]::ReadAllText(`$presetPath)
     `$presetObj = `$presetRaw | ConvertFrom-Json
     `$presetIds = @()
     if (`$presetObj -is [array]) {

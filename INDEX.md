@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 46 |
-| PowerShell | 25 files, 7,290 lines |
-| Total size | 325 KB |
+| PowerShell | 25 files, 7,300 lines |
+| Total size | 329 KB |
 
 ## Files
 
@@ -17,7 +17,7 @@
 | `.gitattributes` | 17 | 472 B | -- |
 | `.gitignore` | 11 | 201 B | Git ignore rules for binaries, logs, and state |
 | `bootstrap.ps1` | 236 | 10.4 KB | Sets up scheduled tasks, state file, launches monitor + orchestrator |
-| `CLAUDE.md` | 88 | 4.2 KB | AI-assisted development context and conventions |
+| `CLAUDE.md` | 135 | 7.7 KB | AI-assisted development context and conventions |
 | `INDEX.md` | 74 | 4.4 KB | Auto-generated file inventory (this file) |
 | `install.ps1` | 438 | 18.3 KB | irm|iex entry point -- downloads repo, verifies manifest, launches bootstrap |
 | `lint.ps1` | 500 | 22.6 KB | PSScriptAnalyzer + custom PS 5.1 / task / path / state checks |
@@ -58,10 +58,10 @@
 | `core/PowerSettings.ps1` | 146 | 5.0 KB | Stage 1: power plan, sleep, and display timeout settings |
 | `core/RemoteAccess.ps1` | 242 | 9.0 KB | WinDeploy Stage: Remote Access |
 | `core/Resilience.psm1` | 429 | 18.8 KB | Task self-healing, directory ACLs, state quarantine, watchdog |
-| `core/State.psm1` | 533 | 16.3 KB | State.json read/write, reboot counter, stage tracking |
+| `core/State.psm1` | 534 | 16.4 KB | State.json read/write, reboot counter, stage tracking |
 | `core/Tailscale.ps1` | 474 | 18.5 KB | Stage 6: Tailscale install + QR-based registration |
 | `core/WindowsUpdate.ps1` | 295 | 11.1 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
-| `core/WinTweaks.ps1` | 891 | 37.4 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
+| `core/WinTweaks.ps1` | 900 | 37.8 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
 | | | | |
 | `data/bloatware.json` | 81 | 2.3 KB | Safe and optional app removal lists for Debloat stage |
 | `data/profiles.json` | 18 | 606 B | Deployment profile definitions |

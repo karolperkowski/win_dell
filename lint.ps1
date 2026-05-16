@@ -131,7 +131,7 @@ function Invoke-PS51CompatCheck {
                Where-Object { $_.Name -ne 'lint.ps1' }   # exclude self - pattern defs would self-match
 
     foreach ($file in $psFiles) {
-        $lines = Get-Content $file.FullName
+        $lines = @(Get-Content $file.FullName)
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $line = $lines[$i]
             if ($line.TrimStart().StartsWith('#')) { continue }   # skip comments
@@ -157,7 +157,7 @@ function Invoke-ScheduledTaskCheck {
 
     foreach ($file in $psFiles) {
         $content = Get-Content $file.FullName -Raw
-        $lines   = Get-Content $file.FullName
+        $lines   = @(Get-Content $file.FullName)
 
         # Rule: RepetitionInterval without RepetitionDuration causes missing EndBoundary
         if ($content -match 'RepetitionInterval' -and $content -notmatch 'RepetitionDuration') {
@@ -224,7 +224,7 @@ function Invoke-HardcodedPathCheck {
                Where-Object { $_.Name -notin $allowedFiles }
 
     foreach ($file in $psFiles) {
-        $lines = Get-Content $file.FullName
+        $lines = @(Get-Content $file.FullName)
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $line = $lines[$i]
             if ($line.TrimStart().StartsWith('#')) { continue }
@@ -290,8 +290,8 @@ function Invoke-StatePropertyCheck {
     # Keys are defined as string literals in hashtable assignments:
     # $state['KeyName'] = ... or $initialState = [ordered]@{ KeyName = ... }
     # --- Extract the canonical schema from State.psm1 (line-by-line, not -Raw) ---
-    $stateLines   = Get-Content $statePsm1
-    $monitorLines = Get-Content $monitorPs1
+    $stateLines   = @(Get-Content $statePsm1)
+    $monitorLines = @(Get-Content $monitorPs1)
     $schemaKeys = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($ln in $stateLines) {
         # Match $state['KeyName'] = ... (authoritative write pattern)
@@ -375,7 +375,7 @@ function Invoke-StatePropertyCheck {
     $notifyPs1 = Join-Path $RepoRoot 'core\Notify.ps1'
     $stateConsumers = @($monitorPs1, $notifyPs1) | Where-Object { Test-Path $_ }
     foreach ($consumerFile in $stateConsumers) {
-        $consumerLines = Get-Content $consumerFile
+        $consumerLines = @(Get-Content $consumerFile)
         for ($i = 0; $i -lt $consumerLines.Count; $i++) {
             $line = $consumerLines[$i]
             if ($line.TrimStart().StartsWith('#')) { continue }
@@ -419,7 +419,7 @@ function Invoke-AddContentBanCheck {
                Where-Object { $_.FullName -notlike '*\.git\*' -and $_.Name -ne 'lint.ps1' }
 
     foreach ($file in $psFiles) {
-        $lines = Get-Content $file.FullName
+        $lines = @(Get-Content $file.FullName)
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $line = $lines[$i]
             if ($line.TrimStart().StartsWith('#')) { continue }
@@ -439,7 +439,7 @@ function Invoke-InlineIfArgumentCheck {
                Where-Object { $_.FullName -notlike '*\.git\*' -and $_.Name -ne 'lint.ps1' }
 
     foreach ($file in $psFiles) {
-        $lines = Get-Content $file.FullName
+        $lines = @(Get-Content $file.FullName)
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $line = $lines[$i]
             if ($line.TrimStart().StartsWith('#')) { continue }

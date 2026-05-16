@@ -191,6 +191,7 @@ function Initialize-DeployState {
         CompletedStages        = @()
         FailedStages           = @()
         StageTimestamps        = [ordered]@{}    # stage -> ISO8601 completion time
+        StageExtras            = @{}             # sub-status annotations: "<Stage>_<Key>" -> value
         LastError              = $null
         LastErrorStage         = $null
         LastErrorTimestamp     = $null
