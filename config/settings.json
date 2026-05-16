@@ -5,12 +5,17 @@
     "TimeSync": {
       "_comment": "Runs first so every later stage (TLS, Windows Update, code-signing, Tailscale auth) sees a correct clock.",
       "ContinueOnError": false,
-      "TimeoutMinutes": 10,
+      "TimeoutMinutes": 15,
       "Timezone": "Eastern Standard Time",
       "_comment_NtpServers": "First entry wins. time.windows.com left in but Google/Cloudflare ahead because MS NTP has historically been flaky from non-domain clients.",
       "NtpServers": ["time.google.com", "time.cloudflare.com", "time.windows.com", "pool.ntp.org"],
       "_comment_ClearRTU": "Dell ships BIOS=local time. The old WinTweaks tweak set RealTimeIsUniversal=1 which made Windows interpret BIOS as UTC and shifted the wall clock by the timezone offset. Set to false only if you dual-boot Linux on the same machine.",
-      "ClearRealTimeIsUniversal": true
+      "ClearRealTimeIsUniversal": true,
+      "_comment_Retries": "If verification fails (Source still 'Local CMOS Clock' after polling), TimeSync returns RebootRequired and the orchestrator reboots. After MaxRebootRetries the stage returns Failed and halts the deploy.",
+      "MaxRebootRetries": 2,
+      "NetworkWaitSeconds": 120,
+      "VerifyTimeoutSeconds": 120,
+      "ResyncAttempts": 5
     },
     "WindowsUpdate": {
       "ContinueOnError": false,

@@ -65,15 +65,22 @@ $Script:STAGE_LABELS = [ordered]@{
     Cleanup                  = 'Cleanup'
 }
 
-# Stages that are permitted to return 'RebootRequired' to the orchestrator
-$Script:REBOOT_ALLOWED_STAGES = @('WindowsUpdate', 'InstallTailscale', 'Cleanup')
+# Stages that are permitted to return 'RebootRequired' to the orchestrator.
+# TimeSync is here because a verification failure (Source still 'Local CMOS
+# Clock' after polling) is recoverable: a reboot gives a fresh network stack
+# and a clean w32time start, and TimeSync caps its own reboot loop via the
+# TimeSync_RebootRetryCount StageExtra.
+$Script:REBOOT_ALLOWED_STAGES = @('TimeSync', 'WindowsUpdate', 'InstallTailscale', 'Cleanup')
 
 # Stages that should re-run on every orchestrator boot until they self-report
 # Complete with no work left to do — bypasses the one-shot Test-StageComplete
 # short-circuit. Used for drains where late-arriving items can show up after
 # a stage was last marked Complete (e.g. cascaded Windows Updates,
 # servicing-stack-triggered cumulative installs that only surface post-reboot).
-$Script:DRAIN_STAGES = @('WindowsUpdate')
+# TimeSync is here so that after returning RebootRequired (which marks it
+# Complete) the post-reboot orchestrator pass re-runs it instead of skipping;
+# a successful re-run is ~30 s of cheap verification.
+$Script:DRAIN_STAGES = @('TimeSync', 'WindowsUpdate')
 
 # ---------------------------------------------------------------------------
 # Stage-specific tunables

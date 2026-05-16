@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 44 |
-| PowerShell | 28 files, 9,264 lines |
-| Total size | 432 KB |
+| PowerShell | 28 files, 9,388 lines |
+| Total size | 437 KB |
 
 ## Files
 
@@ -35,12 +35,12 @@
 | | | | |
 | `apps/.gitkeep` | -- | 0 B | Placeholder -- apps/ holds downloaded installers at runtime |
 | | | | |
-| `config/settings.json` | 168 | 5.8 KB | All deployment configuration -- edit this, not the scripts |
+| `config/settings.json` | 173 | 6.1 KB | All deployment configuration -- edit this, not the scripts |
 | `config/winutil-preset.json` | 21 | 491 B | WinUtil tweak IDs applied during WinTweaks stage |
 | | | | |
 | `core/AppInstall.ps1` | 431 | 15.0 KB | Stages 4-6: Dell SupportAssist, Dell Power Manager, RustDesk |
 | `core/Cleanup.ps1` | 133 | 5.0 KB | Stage 10: remove tasks, disable auto-logon, final reboot |
-| `core/Config.psm1` | 119 | 4.8 KB | Shared constants ($WD.*) -- single source of truth for paths and stage order |
+| `core/Config.psm1` | 126 | 5.2 KB | Shared constants ($WD.*) -- single source of truth for paths and stage order |
 | `core/Debloat.ps1` | 278 | 9.9 KB | Stage 2: remove bloatware apps from bloatware.json lists |
 | `core/DellCommandUpdate.ps1` | 364 | 13.6 KB | Dell Command | Update (DCU) sweep - installs OEM BIOS / firmware / driver |
 | `core/Logging.psm1` | 190 | 6.2 KB | Write-LogInfo/Success/Warning/Error + concurrent-safe file output |
@@ -53,7 +53,7 @@
 | `core/Resilience.psm1` | 493 | 21.6 KB | Task self-healing, directory ACLs, state quarantine, watchdog |
 | `core/State.psm1` | 545 | 16.9 KB | State.json read/write, reboot counter, stage tracking |
 | `core/Tailscale.ps1` | 521 | 21.0 KB | Stage 7: Tailscale install + QR-based registration |
-| `core/TimeSync.ps1` | 246 | 8.8 KB | WinDeploy Stage: Time Sync |
+| `core/TimeSync.ps1` | 363 | 13.9 KB | WinDeploy Stage: Time Sync |
 | `core/WindowsUpdate.ps1` | 552 | 23.4 KB | Stage 9: Windows Update (last -- multiple reboots expected) |
 | `core/Winget.psm1` | 242 | 9.8 KB | Winget interaction helpers - single canonical place to own: |
 | `core/WinTweaks.ps1` | 859 | 36.0 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |

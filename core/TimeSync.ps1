@@ -10,16 +10,26 @@
 
     Steps:
       1. Set the configured timezone via tzutil.exe.
-      2. Clear HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation
-         RealTimeIsUniversal so Windows treats the BIOS clock as local
-         time (Dell ships BIOS=local; the old WinTweaks tweak shifted
-         the clock by the timezone offset on first boot).
+      2. Clear RealTimeIsUniversal so Windows treats the BIOS clock as
+         local time. Dell ships BIOS=local; the old WinTweaks tweak set
+         this to 1 which shifted the clock by the timezone offset.
       3. Set W32Time service to Automatic (Delayed Start) and start it.
-      4. Configure NTP peers via w32tm /config and force a resync.
-      5. Verify Source / LastSyncTime via w32tm /query /status.
+      4. Raise MaxPosPhaseCorrection / MaxNegPhaseCorrection so w32time
+         will step the clock even when the CMOS is hours/years off
+         (dead CMOS battery, fresh-from-factory Dells).
+      5. Configure NTP peers and Type=NTP via w32tm /config.
+      6. Wait for network (DNS resolve one peer) before any resync.
+      7. Loop: w32tm /resync /rediscover + poll /query /status until
+         Source flips off the local clock.
+      8. On success: return Complete.
+         On failure: if reboot retry count < MaxRebootRetries (default 2)
+         return RebootRequired; otherwise return Failed.
 
-    Idempotent — re-running on an already-synced machine is a no-op
-    apart from one extra resync.
+    TimeSync is in REBOOT_ALLOWED_STAGES so a fresh boot with a fresh
+    network stack gets a second chance instead of halting the deploy.
+
+    Idempotent -- re-running on an already-synced machine is one extra
+    resync.
 #>
 
 [CmdletBinding()]
@@ -46,7 +56,7 @@ if ($Config['TimeSync']) { $cfg = $Config['TimeSync'] }
 
 $Timezone = if ($cfg['Timezone']) { $cfg['Timezone'] } else { 'Eastern Standard Time' }
 
-$NtpServers = @('time.windows.com','time.google.com','time.cloudflare.com','pool.ntp.org')
+$NtpServers = @('time.google.com','time.cloudflare.com','time.windows.com','pool.ntp.org')
 if ($cfg['NtpServers'] -and @($cfg['NtpServers']).Count -gt 0) {
     $NtpServers = @($cfg['NtpServers'])
 }
@@ -55,6 +65,11 @@ $ClearRTU = $true
 if ($cfg.ContainsKey('ClearRealTimeIsUniversal') -and $cfg['ClearRealTimeIsUniversal'] -eq $false) {
     $ClearRTU = $false
 }
+
+$MaxRebootRetries     = if ($cfg['MaxRebootRetries'])     { [int]$cfg['MaxRebootRetries']     } else { 2  }
+$NetworkWaitSeconds   = if ($cfg['NetworkWaitSeconds'])   { [int]$cfg['NetworkWaitSeconds']   } else { 120 }
+$VerifyTimeoutSeconds = if ($cfg['VerifyTimeoutSeconds']) { [int]$cfg['VerifyTimeoutSeconds'] } else { 120 }
+$ResyncAttempts       = if ($cfg['ResyncAttempts'])       { [int]$cfg['ResyncAttempts']       } else { 5  }
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,9 +87,6 @@ function Set-WDTimezone {
 }
 
 function Clear-RealTimeIsUniversal {
-    # Dell ships BIOS = local time; the old WinTweaks tweak set this to 1
-    # which made Windows interpret the BIOS clock as UTC. On a single-boot
-    # Windows machine the safe default is to clear it.
     $path = 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation'
     try {
         $val = Get-ItemProperty -Path $path -Name 'RealTimeIsUniversal' -ErrorAction Stop
@@ -92,7 +104,6 @@ function Clear-RealTimeIsUniversal {
 
 function Enable-W32TimeService {
     Write-LogInfo 'Configuring w32time service: Automatic (Delayed Start)...'
-    # Set-Service on PS 5.1 cannot express "Automatic (Delayed Start)" — use sc.exe.
     $out = & sc.exe config w32time start= delayed-auto 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "sc.exe config w32time failed (exit $LASTEXITCODE): $($out -join ' ')"
@@ -108,11 +119,27 @@ function Enable-W32TimeService {
     Write-LogSuccess "  w32time is $((Get-Service w32time).Status)."
 }
 
+function Set-W32TimeMaxPhaseCorrection {
+    # By default w32time refuses to step the clock if the offset exceeds
+    # MaxPosPhaseCorrection / MaxNegPhaseCorrection (15 hours on workstations).
+    # On a Dell with a dead CMOS battery the offset can be years; 0xFFFFFFFF
+    # = "any size correction permitted". Without this the resync succeeds
+    # but the clock never moves.
+    $cfg = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Config'
+    Set-ItemProperty -Path $cfg -Name 'MaxPosPhaseCorrection' -Value 0xFFFFFFFF -Type DWord
+    Set-ItemProperty -Path $cfg -Name 'MaxNegPhaseCorrection' -Value 0xFFFFFFFF -Type DWord
+    Set-ItemProperty -Path $cfg -Name 'AnnounceFlags'         -Value 5          -Type DWord
+    Write-LogInfo '  MaxPos/Neg PhaseCorrection set to unlimited, AnnounceFlags=5.'
+
+    # Force Type=NTP (rather than NT5DS which expects a domain).
+    $params = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters'
+    Set-ItemProperty -Path $params -Name 'Type' -Value 'NTP' -Type String
+    Write-LogInfo '  Parameters\Type=NTP.'
+}
+
 function Set-NtpPeers {
     param([string[]]$Peers)
-    # 0x9 = SpecialInterval (0x1) | Client (0x8). Marks each peer as a poll-
-    # interval-controlled time source, which is what we want from a SYSTEM
-    # context without an AD domain.
+    # 0x9 = SpecialInterval (0x1) | Client (0x8).
     $peerList = ($Peers | ForEach-Object { "$_,0x9" }) -join ' '
     Write-LogInfo "Configuring NTP peers: $peerList"
 
@@ -123,30 +150,44 @@ function Set-NtpPeers {
     }
 }
 
-function Invoke-TimeResync {
-    param([int]$MaxAttempts = 3)
-
-    for ($i = 1; $i -le $MaxAttempts; $i++) {
-        Write-LogInfo "Resync attempt $i/$MaxAttempts..."
-        $out = & w32tm.exe /resync /rediscover 2>&1
-        $msg = ($out -join ' ').Trim()
-        Write-LogInfo "  $msg"
-        if ($LASTEXITCODE -eq 0) {
-            Write-LogSuccess "  Resync succeeded on attempt $i."
-            return $true
-        }
-        # 0x80070426 = service not started; happens if the very first
-        # resync races w32time startup. Pause and retry.
-        Start-Sleep -Seconds 10
+function Restart-W32Time {
+    Write-LogInfo 'Restarting w32time to pick up new config...'
+    try {
+        Stop-Service w32time -Force -ErrorAction Stop
+        Start-Service w32time -ErrorAction Stop
+        (Get-Service w32time).WaitForStatus('Running','00:00:30')
+        Write-LogSuccess "  w32time restarted ($((Get-Service w32time).Status))."
+    } catch {
+        Write-LogWarning "  Restart partial: $($_.Exception.Message)"
     }
+}
+
+function Wait-ForNetwork {
+    param(
+        [string[]]$Peers,
+        [int]$TimeoutSeconds
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $attempt = 0
+    while ((Get-Date) -lt $deadline) {
+        $attempt++
+        foreach ($peer in $Peers) {
+            try {
+                $null = Resolve-DnsName -Name $peer -Type A -DnsOnly -ErrorAction Stop
+                Write-LogSuccess "  Network up: resolved $peer (attempt $attempt)."
+                return $true
+            } catch { }
+        }
+        Write-LogInfo "  No NTP peer resolves yet (attempt $attempt). Sleeping 5 s..."
+        Start-Sleep -Seconds 5
+    }
+    Write-LogWarning "  Network probe timed out after ${TimeoutSeconds}s."
     return $false
 }
 
-function Test-TimeSync {
-    Write-LogInfo 'Querying w32tm status...'
+function Get-W32TimeStatus {
     $statusOut = & w32tm.exe /query /status 2>&1
     $statusText = ($statusOut -join "`n")
-    Write-LogInfo $statusText
 
     $source = $null
     if ($statusText -match '(?im)^\s*Source\s*:\s*(.+)$') {
@@ -171,6 +212,55 @@ function Test-TimeSync {
     }
 }
 
+function Test-W32TimeSynced {
+    param([PSCustomObject]$Status)
+    if (-not $Status.Source) { return $false }
+    if ($Status.Source -eq 'Local CMOS Clock')        { return $false }
+    if ($Status.Source -eq 'Free-running System Clock') { return $false }
+    if (-not $Status.LastSync) { return $false }
+    return $true
+}
+
+function Invoke-TimeResyncWithWait {
+    param(
+        [int]$Attempts,
+        [int]$WaitSecondsPerAttempt
+    )
+
+    for ($i = 1; $i -le $Attempts; $i++) {
+        Write-LogInfo "Resync attempt $i/$Attempts..."
+        $out = & w32tm.exe /resync /rediscover 2>&1
+        Write-LogInfo "  $(($out -join ' ').Trim())"
+
+        # /resync returns when the request is dispatched, not when the sync
+        # completes. Poll /query /status until Source flips off the local
+        # clock or we exhaust this attempt's budget.
+        $deadline = (Get-Date).AddSeconds($WaitSecondsPerAttempt)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 5
+            $st = Get-W32TimeStatus
+            if (Test-W32TimeSynced -Status $st) {
+                Write-LogSuccess ("  Source flipped to '$($st.Source)' after attempt $i.")
+                return $st
+            }
+        }
+        Write-LogInfo "  Attempt $i did not complete a sync within ${WaitSecondsPerAttempt}s."
+    }
+    # Final read.
+    return (Get-W32TimeStatus)
+}
+
+function Get-RebootRetryCount {
+    try {
+        $state = Get-DeployState
+        if ($state['StageExtras']) {
+            $v = $state['StageExtras']['TimeSync_RebootRetryCount']
+            if ($v) { return [int]$v }
+        }
+    } catch { }
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -188,7 +278,7 @@ try {
         $cleared = Clear-RealTimeIsUniversal
         try { Set-StageExtra -StageName $StageName -Key 'RealTimeIsUniversalCleared' -Value $cleared } catch {}
     } else {
-        Write-LogInfo 'ClearRealTimeIsUniversal=false in config — leaving registry untouched.'
+        Write-LogInfo 'ClearRealTimeIsUniversal=false in config -- leaving registry untouched.'
         try { Set-StageExtra -StageName $StageName -Key 'RealTimeIsUniversalCleared' -Value $false } catch {}
     }
 
@@ -196,47 +286,74 @@ try {
     Write-LogSection 'W32Time service'
     Enable-W32TimeService
 
-    # 4. NTP peers
+    # 4. Allow unlimited phase correction (handle dead CMOS / large skew)
+    Write-LogSection 'W32Time phase-correction limits'
+    Set-W32TimeMaxPhaseCorrection
+
+    # 5. NTP peers
     Write-LogSection 'NTP peer configuration'
     Set-NtpPeers -Peers $NtpServers
     try { Set-StageExtra -StageName $StageName -Key 'NtpPeers' -Value ($NtpServers -join ',') } catch {}
 
-    # 5. Force resync
-    Write-LogSection 'Force resync'
-    $resyncOk = Invoke-TimeResync -MaxAttempts 3
-    try { Set-StageExtra -StageName $StageName -Key 'ResyncSucceeded' -Value $resyncOk } catch {}
+    # 6. Restart w32time so the new MaxPhaseCorrection registry values take
+    #    effect (service reads these at start).
+    Write-LogSection 'Restart w32time'
+    Restart-W32Time
 
-    # 6. Verify
-    Write-LogSection 'Verification'
-    $verify = Test-TimeSync
+    # 7. Wait for network -- Resolve-DnsName one of the peers. Fresh boots on
+    #    Wi-Fi can take 30-60s before DNS works.
+    Write-LogSection 'Network readiness'
+    $netUp = Wait-ForNetwork -Peers $NtpServers -TimeoutSeconds $NetworkWaitSeconds
+    try { Set-StageExtra -StageName $StageName -Key 'NetworkReady' -Value $netUp } catch {}
+    if (-not $netUp) {
+        Write-LogWarning "Continuing without confirmed network -- resync may fail."
+    }
+
+    # 8. Resync + poll
+    Write-LogSection 'Force resync (with poll)'
+    $perAttemptWait = [Math]::Max(15, [int]($VerifyTimeoutSeconds / $ResyncAttempts))
+    $final = Invoke-TimeResyncWithWait -Attempts $ResyncAttempts -WaitSecondsPerAttempt $perAttemptWait
+
     try {
-        Set-StageExtra -StageName $StageName -Key 'Source'      -Value $verify.Source
-        Set-StageExtra -StageName $StageName -Key 'LastSyncRaw' -Value $verify.LastSyncRaw
+        Set-StageExtra -StageName $StageName -Key 'Source'      -Value $final.Source
+        Set-StageExtra -StageName $StageName -Key 'LastSyncRaw' -Value $final.LastSyncRaw
     } catch {}
 
-    $sourceOk = ($verify.Source -and $verify.Source -ne 'Local CMOS Clock' -and $verify.Source -ne 'Free-running System Clock')
-    $recent   = $false
-    if ($verify.LastSync) {
-        $age = (Get-Date) - $verify.LastSync
-        $recent = ($age.TotalHours -lt 24)
-        Write-LogInfo ("  LastSync age: {0:N1} h" -f $age.TotalHours)
-    }
+    # 9. Verify
+    Write-LogSection 'Verification'
+    Write-LogInfo $final.StatusText
+    $synced = Test-W32TimeSynced -Status $final
 
-    if ($sourceOk -and $recent) {
-        Write-LogSuccess "Time sync OK (source=$($verify.Source), last sync $($verify.LastSyncRaw))."
+    if ($synced) {
+        Write-LogSuccess "Time sync OK (source=$($final.Source), last sync $($final.LastSyncRaw))."
+        # Reset reboot retry count on success so subsequent re-runs start fresh.
+        try { Set-StageExtra -StageName $StageName -Key 'RebootRetryCount' -Value 0 } catch {}
         Close-Logger -FinalStatus 'SUCCESS'
-        return @{ Status = 'Complete'; Message = "Time synced from $($verify.Source)." }
+        return @{ Status = 'Complete'; Message = "Time synced from $($final.Source)." }
     }
 
-    $reason = if (-not $sourceOk) {
-        "no external NTP source bound (Source='$($verify.Source)')"
+    $reason = if (-not $final.Source -or $final.Source -eq 'Local CMOS Clock' -or $final.Source -eq 'Free-running System Clock') {
+        "no external NTP source bound (Source='$($final.Source)')"
     } else {
-        "last sync stale or missing ('$($verify.LastSyncRaw)')"
+        "last sync missing ('$($final.LastSyncRaw)')"
     }
-    Write-LogError "Time sync verification failed: $reason"
-    try { Set-StageExtra -StageName $StageName -Key 'QueryStatus' -Value $verify.StatusText } catch {}
+
+    try { Set-StageExtra -StageName $StageName -Key 'QueryStatus' -Value $final.StatusText } catch {}
+
+    # 10. Reboot fallback
+    $retryCount = Get-RebootRetryCount
+    if ($retryCount -lt $MaxRebootRetries) {
+        $next = $retryCount + 1
+        try { Set-StageExtra -StageName $StageName -Key 'RebootRetryCount' -Value $next } catch {}
+        Write-LogWarning "Time sync verification failed: $reason"
+        Write-LogWarning "Reboot retry $next/$MaxRebootRetries -- orchestrator will reboot and re-run TimeSync."
+        Close-Logger -FinalStatus 'REBOOT'
+        return @{ Status = 'RebootRequired'; Message = "TimeSync retry $next/${MaxRebootRetries}: $reason" }
+    }
+
+    Write-LogError "Time sync verification failed after $MaxRebootRetries reboot retries: $reason"
     Close-Logger -FinalStatus 'FAILED'
-    return @{ Status = 'Failed'; Message = "Time sync verification failed: $reason" }
+    return @{ Status = 'Failed'; Message = "Time sync verification failed after $MaxRebootRetries reboot retries: $reason" }
 
 } catch {
     Write-LogError "TimeSync stage failed: $($_.Exception.Message)"
