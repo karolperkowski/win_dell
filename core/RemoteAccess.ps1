@@ -54,7 +54,8 @@ function Enable-RDP {
         $tsKey  = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
         $rdpKey = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
 
-        $current = (Get-ItemProperty -Path $tsKey -Name fDenyTSConnections -ErrorAction SilentlyContinue).fDenyTSConnections
+        $current = $null
+        try { $current = Get-ItemPropertyValue -Path $tsKey -Name 'fDenyTSConnections' -ErrorAction Stop } catch { }
         if ($current -eq 0) {
             Write-LogInfo '  RDP already enabled.'
         } else {
@@ -82,7 +83,11 @@ function Enable-WinRMService {
         Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
 
         # Scope client trusted hosts to the Tailscale CGNAT range.
-        $current = (Get-Item WSMan:\localhost\Client\TrustedHosts -ErrorAction SilentlyContinue).Value
+        $current = $null
+        try {
+            $th = Get-Item WSMan:\localhost\Client\TrustedHosts -ErrorAction Stop
+            if ($th) { $current = $th.Value }
+        } catch { }
         if ($current -ne $TrustedHostMask) {
             Set-Item WSMan:\localhost\Client\TrustedHosts -Value $TrustedHostMask -Force
             Write-LogInfo "  TrustedHosts set to: $TrustedHostMask"
@@ -170,10 +175,18 @@ function Set-FirewallProfileScope {
 
 function Write-Summary {
     Write-LogInfo '--- Remote Access Summary ---'
-    $rdpOn = ((Get-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-              -Name fDenyTSConnections -ErrorAction SilentlyContinue).fDenyTSConnections -eq 0)
-    $sshOn = ((Get-Service sshd  -ErrorAction SilentlyContinue).Status -eq 'Running')
-    $wrmOn = ((Get-Service WinRM -ErrorAction SilentlyContinue).Status -eq 'Running')
+
+    $fDeny = $null
+    try {
+        $fDeny = Get-ItemPropertyValue -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                                        -Name 'fDenyTSConnections' -ErrorAction Stop
+    } catch { }
+    $rdpOn = ($fDeny -eq 0)
+
+    $sshSvc = Get-Service sshd  -ErrorAction SilentlyContinue
+    $wrmSvc = Get-Service WinRM -ErrorAction SilentlyContinue
+    $sshOn  = ($sshSvc -and $sshSvc.Status -eq 'Running')
+    $wrmOn  = ($wrmSvc -and $wrmSvc.Status -eq 'Running')
 
     if ($rdpOn) { $rdpStr = 'ON  (3389)' } else { $rdpStr = 'OFF' }
     if ($sshOn) { $sshStr = 'ON  (22)'   } else { $sshStr = 'OFF' }

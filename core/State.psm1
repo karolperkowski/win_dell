@@ -242,9 +242,17 @@ function Set-StageComplete {
 
     .PARAMETER StageName
         Must be one of the values in $Script:STAGE_ORDER.
+
+    .PARAMETER Message
+        Optional annotation stored in StageExtras.<StageName>_Note. Used by the
+        orchestrator to record why a stage was marked complete without running
+        (e.g. skipped due to prerequisite failure).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$StageName)
+    param(
+        [Parameter(Mandatory)][string]$StageName,
+        [string]$Message
+    )
 
     Assert-StateExists
     Invoke-WithFileLock {
@@ -259,6 +267,11 @@ function Set-StageComplete {
         # Record completion
         $state['CompletedStages'] = @($state['CompletedStages']) + $StageName
         $state['StageTimestamps'][$StageName] = (Get-Date -Format 'o')
+
+        if ($Message) {
+            if (-not $state['StageExtras']) { $state['StageExtras'] = @{} }
+            $state['StageExtras']["${StageName}_Note"] = $Message
+        }
 
         # Remove from failed list if it was previously recorded as failed
         if ($state['FailedStages'] -contains $StageName) {

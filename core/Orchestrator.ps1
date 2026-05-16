@@ -107,6 +107,35 @@ $Script:MAX_CONSECUTIVE_FAILURES = 3
 # Helper functions
 # ---------------------------------------------------------------------------
 
+function Wait-DnsResolvable {
+    <#
+    .SYNOPSIS
+        Attempts DNS resolution with retry/backoff to handle cold-boot races
+        where the Resume scheduled task fires before the network stack is up.
+    .OUTPUTS
+        $true if the hostname resolves within the retry budget, else $false.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$HostName,
+        [int]$MaxAttempts = 6,
+        [int]$InitialDelaySeconds = 2
+    )
+    $delay = $InitialDelaySeconds
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        try {
+            $null = [System.Net.Dns]::GetHostAddresses($HostName)
+            if ($i -gt 1) { Write-LogInfo "DNS for $HostName ready after $i attempts." }
+            return $true
+        } catch {
+            if ($i -lt $MaxAttempts) {
+                Start-Sleep -Seconds $delay
+                $delay = [Math]::Min($delay * 2, 15)
+            }
+        }
+    }
+    return $false
+}
+
 function Test-StagePrerequisites {
     <#
     .SYNOPSIS
@@ -126,16 +155,12 @@ function Test-StagePrerequisites {
             if ($freeGB -lt 10) {
                 return "Insufficient disk space: ${freeGB}GB free (need 10GB+)"
             }
-            try {
-                $null = [System.Net.Dns]::GetHostAddresses('www.powershellgallery.com')
-            } catch {
+            if (-not (Wait-DnsResolvable -HostName 'www.powershellgallery.com')) {
                 return 'Cannot resolve www.powershellgallery.com - PSGallery unreachable'
             }
         }
         'InstallTailscale' {
-            try {
-                $null = [System.Net.Dns]::GetHostAddresses('tailscale.com')
-            } catch {
+            if (-not (Wait-DnsResolvable -HostName 'tailscale.com')) {
                 return 'Cannot resolve tailscale.com - no internet connection'
             }
         }

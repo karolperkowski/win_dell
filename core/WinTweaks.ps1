@@ -285,7 +285,8 @@ function Mount-AllUserHives {
         # Skip short SIDs -- these are system accounts (SYSTEM, LOCAL SERVICE, etc.)
         if ($sid.Length -lt 20) { return }
 
-        $profilePath = (Get-ItemProperty $_.PSPath -Name 'ProfileImagePath' -ErrorAction SilentlyContinue).ProfileImagePath
+        $profilePath = $null
+        try { $profilePath = Get-ItemPropertyValue -Path $_.PSPath -Name 'ProfileImagePath' -ErrorAction Stop } catch { }
         if (-not $profilePath -or -not (Test-Path $profilePath)) { return }
 
         # If the user is logged in their hive is already in HKU under their SID

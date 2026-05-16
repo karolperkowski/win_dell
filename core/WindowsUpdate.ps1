@@ -55,15 +55,24 @@ $Script:WU_CYCLE_STATE_KEY  = 'WindowsUpdate_CycleCount'   # stored in state ext
 
 function Test-PSGalleryReachable {
     Write-LogInfo 'Pre-flight: checking PSGallery connectivity...'
-    try {
-        $resp = Invoke-WebRequest -Uri 'https://www.powershellgallery.com/api/v2' `
-            -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-        if ($resp.StatusCode -eq 200) {
-            Write-LogSuccess 'PSGallery is reachable.'
-            return $true
+    $maxAttempts = 4
+    $delay = 3
+    for ($i = 1; $i -le $maxAttempts; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri 'https://www.powershellgallery.com/api/v2' `
+                -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+            if ($resp.StatusCode -eq 200) {
+                if ($i -gt 1) { Write-LogInfo "PSGallery reachable after $i attempts." }
+                Write-LogSuccess 'PSGallery is reachable.'
+                return $true
+            }
+        } catch {
+            Write-LogWarning "PSGallery check attempt ${i}/${maxAttempts} failed: $($_.Exception.Message)"
+            if ($i -lt $maxAttempts) {
+                Start-Sleep -Seconds $delay
+                $delay = [Math]::Min($delay * 2, 20)
+            }
         }
-    } catch {
-        Write-LogWarning "PSGallery connectivity check failed: $($_.Exception.Message)"
     }
     return $false
 }
@@ -162,9 +171,14 @@ function Test-RebootPending {
     if (Test-Path $wuReg) { $reasons += 'WindowsUpdate registry key' }
 
     # Source 2: Pending file rename operations
+    # Strict-mode-safe: Get-ItemPropertyValue throws on missing value; we just
+    # catch and treat as "not pending". Do NOT chain .Prop off a SilentlyContinue
+    # Get-ItemProperty — that throws under Set-StrictMode Latest.
     $pfro = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
-    $pfroVal = (Get-ItemProperty -Path $pfro -Name 'PendingFileRenameOperations' `
-                    -ErrorAction SilentlyContinue).PendingFileRenameOperations
+    $pfroVal = $null
+    try {
+        $pfroVal = Get-ItemPropertyValue -Path $pfro -Name 'PendingFileRenameOperations' -ErrorAction Stop
+    } catch { $pfroVal = $null }
     if ($pfroVal) { $reasons += 'PendingFileRenameOperations' }
 
     # Source 3: Component-Based Servicing

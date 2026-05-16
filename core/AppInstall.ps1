@@ -281,6 +281,77 @@ function Invoke-WingetInstall {
     }
 }
 
+function Invoke-WingetManifestInstall {
+    <#
+    Install a package via a locally-generated winget singleton manifest.
+    Used for packages that are not present in the public winget source (e.g.
+    RustDesk.RustDesk was removed from winget-pkgs in March 2026), or where
+    we want to install vendor-direct with a specific version pinned.
+
+    winget still handles the download, SHA256 verification, silent args, and
+    exit-code semantics — we just feed it a manifest that points at the
+    vendor's direct URL.
+    #>
+    param([hashtable]$AppDef)
+
+    foreach ($key in @('PackageIdentifier','PackageVersion','Architecture','ManifestInstallerType','DownloadUrl','InstallerSha256')) {
+        if (-not $AppDef[$key]) {
+            throw "WINGET_MANIFEST app '$($AppDef['DisplayName'])' is missing required field '$key'."
+        }
+    }
+
+    $id        = $AppDef['PackageIdentifier']
+    $version   = $AppDef['PackageVersion']
+    $arch      = $AppDef['Architecture']
+    $instType  = $AppDef['ManifestInstallerType']
+    $url       = $AppDef['DownloadUrl']
+    $sha256    = $AppDef['InstallerSha256'].ToUpper()
+    $publisher = if ($AppDef['Publisher'])  { $AppDef['Publisher']  } else { ($id -split '\.')[0] }
+    $name      = if ($AppDef['PackageName']) { $AppDef['PackageName'] } else { ($id -split '\.')[-1] }
+
+    $stagingDir = Join-Path $env:TEMP 'windeploy-winget-manifests'
+    if (-not (Test-Path $stagingDir)) {
+        New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+    }
+    $manifestPath = Join-Path $stagingDir "$id-$version.yaml"
+
+    $yaml = @"
+PackageIdentifier: $id
+PackageVersion: $version
+PackageLocale: en-US
+Publisher: $publisher
+PackageName: $name
+License: Proprietary
+ShortDescription: WinDeploy-generated manifest for $id
+InstallerType: $instType
+Installers:
+  - Architecture: $arch
+    InstallerUrl: $url
+    InstallerSha256: $sha256
+ManifestType: singleton
+ManifestVersion: 1.6.0
+"@
+    # UTF-8 without BOM — winget's YAML parser rejects a BOM on singleton manifests.
+    [System.IO.File]::WriteAllText($manifestPath, $yaml, [System.Text.UTF8Encoding]::new($false))
+    Write-LogInfo "Generated winget manifest: $manifestPath"
+
+    $wingetExe = Find-WingetExe
+    Write-LogInfo "Installing '$id' $version via winget --manifest..."
+    & $wingetExe install `
+        --manifest $manifestPath `
+        --silent `
+        --accept-package-agreements `
+        --accept-source-agreements `
+        --disable-interactivity `
+        2>&1
+
+    if ($LASTEXITCODE -in @(0, -1978335189)) {
+        Write-LogSuccess "winget --manifest install of '$id' succeeded (exit $LASTEXITCODE)."
+    } else {
+        throw "winget --manifest install of '$id' failed (exit $LASTEXITCODE). Manifest: $manifestPath"
+    }
+}
+
 function Install-App {
     param([hashtable]$AppDef)
 
@@ -292,7 +363,7 @@ function Install-App {
     if ($AppDef['SuccessExitCodes']) { $successCodes = @($AppDef['SuccessExitCodes']) }
 
     $installerPath = ''
-    if ($type.ToUpper() -ne 'WINGET') {
+    if ($type.ToUpper() -notin @('WINGET','WINGET_MANIFEST')) {
         $installerPath = Resolve-InstallerPath -AppDef $AppDef
     }
 
@@ -318,6 +389,10 @@ function Install-App {
                 throw "InstallerType WINGET requires 'WingetId' in the app definition for '$displayName'."
             }
             Invoke-WingetInstall -PackageId $packageId
+            return $false
+        }
+        'WINGET_MANIFEST' {
+            Invoke-WingetManifestInstall -AppDef $AppDef
             return $false
         }
         default {

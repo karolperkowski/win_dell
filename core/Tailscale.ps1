@@ -67,6 +67,57 @@ function Write-TailscaleJson {
     $data | ConvertTo-Json | Set-Content -Path $TS_JSON -Encoding UTF8
 }
 
+function Write-NetworkSnapshot {
+    <#
+    Logs pre-install adapter/driver state so if the system freezes again we have
+    evidence of what was present before WinTun was loaded.
+    #>
+    param([string]$Label)
+    try {
+        Write-LogInfo "--- Network snapshot ($Label) ---"
+        Get-NetAdapter -ErrorAction SilentlyContinue |
+            Sort-Object ifIndex |
+            ForEach-Object {
+                Write-LogInfo ("  [{0}] {1} | {2} | {3}" -f $_.ifIndex, $_.Name, $_.InterfaceDescription, $_.Status)
+            }
+        $tun = Get-PnpDevice -Class Net -ErrorAction SilentlyContinue |
+               Where-Object { $_.FriendlyName -match 'Tailscale|Wintun' }
+        if ($tun) {
+            foreach ($d in $tun) {
+                Write-LogInfo ("  PnP: {0} | Status: {1} | InstanceId: {2}" -f $d.FriendlyName, $d.Status, $d.InstanceId)
+            }
+        } else {
+            Write-LogInfo '  PnP: no Tailscale/Wintun device present.'
+        }
+    } catch {
+        Write-LogWarning "Network snapshot failed: $($_.Exception.Message)"
+    }
+}
+
+function Wait-TailscaleDriver {
+    <#
+    After winget reports Tailscale installed, the MSI may still be running its
+    child WinTun driver installer. Poll for the WinTun PnP device before
+    touching the Tailscale service — this is the missing handshake that caused
+    the 13:52 install to deadlock the network stack (Wait-TailscaleService was
+    hammering SCM while the driver was still loading in kernel mode).
+    #>
+    param([int]$TimeoutSeconds = 180)
+    Write-LogInfo "Waiting for Tailscale/WinTun driver to register (up to ${TimeoutSeconds}s)..."
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $dev = Get-PnpDevice -Class Net -ErrorAction SilentlyContinue |
+               Where-Object { $_.FriendlyName -match 'Tailscale|Wintun' }
+        if ($dev -and ($dev | Where-Object Status -eq 'OK')) {
+            Write-LogSuccess "Tailscale driver ready: $($dev[0].FriendlyName)"
+            return $true
+        }
+        Start-Sleep -Seconds 5
+    }
+    Write-LogWarning "WinTun/Tailscale PnP device did not register within ${TimeoutSeconds}s - proceeding anyway."
+    return $false
+}
+
 function Install-TailscaleViaWinget {
     # Resolve winget path - not on PATH when running as SYSTEM
     $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
@@ -117,20 +168,49 @@ function Install-TailscaleViaWinget {
 }
 
 function Wait-TailscaleService {
+    <#
+    Wait for the Tailscale Windows service to enter the Running state.
+
+    IMPORTANT: this function must NOT call Start-Service in a tight loop. During
+    the original post-install window the WinTun driver is still registering in
+    kernel mode, and repeated SCM start requests against a half-loaded network
+    filter driver will deadlock the network stack and freeze the desktop
+    (observed 2026-04-10: system-wide hang requiring force power-off). Let SCM
+    start the service once, then only poll Status.
+    #>
     Write-LogInfo "Waiting for $TS_SERVICE service..."
-    $deadline = (Get-Date).AddSeconds(60)
+    $svc = Get-Service -Name $TS_SERVICE -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        throw "$TS_SERVICE service not registered after install."
+    }
+
+    # Single, non-blocking attempt to kick the service if it's idle. We do NOT
+    # repeat this in the poll loop.
+    if ($svc.Status -ne 'Running') {
+        try {
+            Start-Service -Name $TS_SERVICE -ErrorAction Stop
+        } catch {
+            Write-LogWarning "Initial Start-Service failed: $($_.Exception.Message) - will poll Status only."
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline) {
         $svc = Get-Service -Name $TS_SERVICE -ErrorAction SilentlyContinue
         if ($svc -and $svc.Status -eq 'Running') {
             Write-LogSuccess "$TS_SERVICE service is running."
             return
         }
-        if ($svc -and $svc.Status -ne 'Running') {
-            Start-Service -Name $TS_SERVICE -ErrorAction SilentlyContinue
-        }
         Start-Sleep -Seconds 3
     }
-    throw "$TS_SERVICE service did not start within 60 seconds."
+
+    # Diagnostic dump before throwing — next time we want evidence, not silence
+    Write-LogError "$TS_SERVICE service did not start within 120 seconds."
+    try {
+        $s = Get-Service -Name $TS_SERVICE -ErrorAction SilentlyContinue
+        if ($s) { Write-LogError ("  Service status: {0} / StartType: {1}" -f $s.Status, $s.StartType) }
+    } catch { }
+    throw "$TS_SERVICE service did not start within 120 seconds."
 }
 
 function Test-TailscaleRegistered {
@@ -271,10 +351,33 @@ try {
         Write-LogInfo 'Tailscale installed but not registered - proceeding to auth.'
     } else {
         # ── Install ──
+        Write-NetworkSnapshot -Label 'pre-install'
         Install-TailscaleViaWinget
+        # Wait for the WinTun kernel driver before touching the service. Skipping
+        # this step is what froze the system on 2026-04-10.
+        $null = Wait-TailscaleDriver -TimeoutSeconds 180
+        Write-NetworkSnapshot -Label 'post-install'
     }
 
     Wait-TailscaleService
+
+    # Gate: confirm the LocalAPI actually responds before running `tailscale up`.
+    # If tailscaled can't answer a status query, the auth flow will hang with no
+    # output and we'd block on the URL-wait loop for 60s for nothing.
+    Write-LogInfo 'Verifying Tailscale backend responsiveness...'
+    $backendDeadline = (Get-Date).AddSeconds(60)
+    $backendReady    = $false
+    while ((Get-Date) -lt $backendDeadline) {
+        try {
+            $null = & $TS_EXE status --json 2>$null
+            if ($LASTEXITCODE -eq 0) { $backendReady = $true; break }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $backendReady) {
+        throw 'Tailscale backend did not respond to status query - install may be incomplete.'
+    }
+    Write-LogSuccess 'Tailscale backend is responsive.'
 
     # ── Auth: pre-auth key path ──
     if ($authKey) {

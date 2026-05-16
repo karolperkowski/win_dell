@@ -79,3 +79,9 @@ WindowsUpdate runs **last** because it takes the longest and requires multiple r
 Use `Write-LogInfo`, `Write-LogSuccess`, `Write-LogWarning`, `Write-LogError` from `Logging.psm1`.
 **Never use `Write-Host` in stage scripts -- it bypasses the log file.**
 **Never use `Add-Content` for log writes -- use `[System.IO.File]::AppendAllText` to handle concurrent writers.**
+
+---
+
+## App install types (`AppInstall.ps1`)
+
+Use `WINGET` when the package exists in the public `winget-pkgs` source. Use `WINGET_MANIFEST` when it doesn't (removed, private vendor, or you want to pin a specific URL). `WINGET_MANIFEST` generates a singleton YAML at install time from `PackageIdentifier`/`PackageVersion`/`Architecture`/`ManifestInstallerType`/`DownloadUrl`/`InstallerSha256` and hands it to `winget install --manifest` — winget still owns the download, SHA256 verification, silent handling, and exit codes. To bump a version, run `tools/Get-WingetManifestFields.ps1 -Url <new-url> -PackageIdentifier <id> -PackageVersion <ver>` to get the new SHA256 and paste it into `config/settings.json`. Never fall back to `MSI`/`EXE` when a `WINGET_MANIFEST` alternative works — we want one CLI owning all installs.

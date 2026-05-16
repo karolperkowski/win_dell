@@ -179,6 +179,7 @@ try {
             CompletedStages        = @()
             FailedStages           = @()
             StageTimestamps        = @{}
+            StageExtras            = @{}
             LastError              = $null
             LastErrorStage         = $null
             LastErrorTimestamp     = $null

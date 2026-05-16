@@ -88,9 +88,16 @@
     "InstallRustDesk": {
       "DisplayName": "RustDesk",
 
-      "_comment_InstallerType": "WINGET uses winget.exe - no local file needed.",
-      "InstallerType": "WINGET",
-      "WingetId": "RustDesk.RustDesk",
+      "_comment_InstallerType": "WINGET_MANIFEST: winget install --manifest with a locally-generated YAML pointing at the vendor's direct URL. Used because RustDesk.RustDesk was removed from winget-pkgs in March 2026 so the plain WINGET path cannot resolve it. winget still handles download, SHA256 verification, silent args, and exit codes.",
+      "InstallerType": "WINGET_MANIFEST",
+      "PackageIdentifier": "RustDesk.RustDesk",
+      "PackageVersion": "1.4.6",
+      "Architecture": "x64",
+      "ManifestInstallerType": "wix",
+      "DownloadUrl": "https://github.com/rustdesk/rustdesk/releases/download/1.4.6/rustdesk-1.4.6-x86_64.msi",
+      "InstallerSha256": "7AAD1F481B2FDF86166D082933071E7E9AAF7EFD3666A4204CDC5FD2F42B0E59",
+      "Publisher": "RustDesk",
+      "PackageName": "RustDesk",
 
       "Detection": {
         "_comment": "Method: Registry | File | Service",

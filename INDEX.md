@@ -6,9 +6,9 @@
 
 | Metric | Value |
 |---|---|
-| Files | 39 |
-| PowerShell | 24 files, 6,781 lines |
-| Total size | 300 KB |
+| Files | 46 |
+| PowerShell | 25 files, 7,085 lines |
+| Total size | 315 KB |
 
 ## Files
 
@@ -16,8 +16,8 @@
 |---|---|---|---|
 | `.gitattributes` | 17 | 472 B | -- |
 | `.gitignore` | 11 | 201 B | Git ignore rules for binaries, logs, and state |
-| `bootstrap.ps1` | 235 | 10.3 KB | Sets up scheduled tasks, state file, launches monitor + orchestrator |
-| `CLAUDE.md` | 82 | 3.4 KB | AI-assisted development context and conventions |
+| `bootstrap.ps1` | 236 | 10.4 KB | Sets up scheduled tasks, state file, launches monitor + orchestrator |
+| `CLAUDE.md` | 88 | 4.2 KB | AI-assisted development context and conventions |
 | `INDEX.md` | 65 | 3.9 KB | Auto-generated file inventory (this file) |
 | `install.ps1` | 438 | 18.3 KB | irm|iex entry point -- downloads repo, verifies manifest, launches bootstrap |
 | `lint.ps1` | 500 | 22.6 KB | PSScriptAnalyzer + custom PS 5.1 / task / path / state checks |
@@ -32,12 +32,20 @@
 | | | | |
 | `.github/workflows/ci.yml` | 202 | 8.1 KB | CI pipeline: lint, validate tasks, sign manifest (sequential) |
 | | | | |
+| `.trunk/.gitignore` | 10 | 80 B | -- |
+| `.trunk/trunk.yaml` | 30 | 870 B | -- |
+| `.trunk/configs/.markdownlint.yaml` | 3 | 109 B | -- |
+| `.trunk/configs/.shellcheckrc` | 8 | 167 B | -- |
+| `.trunk/configs/.yamllint.yaml` | 8 | 152 B | -- |
+| | | | |
+| `.vscode/settings.json` | 15 | 580 B | -- |
+| | | | |
 | `apps/.gitkeep` | -- | 0 B | Placeholder -- apps/ holds downloaded installers at runtime |
 | | | | |
-| `config/settings.json` | 144 | 3.7 KB | All deployment configuration -- edit this, not the scripts |
+| `config/settings.json` | 151 | 4.4 KB | All deployment configuration -- edit this, not the scripts |
 | `config/winutil-preset.json` | 16 | 351 B | WinUtil tweak IDs applied during WinTweaks stage |
 | | | | |
-| `core/AppInstall.ps1` | 391 | 13.3 KB | Stages 4-5: Dell SupportAssist and Power Manager installs |
+| `core/AppInstall.ps1` | 466 | 16.1 KB | Stages 4-5: Dell SupportAssist and Power Manager installs |
 | `core/Cleanup.ps1` | 133 | 5.0 KB | Stage 8: remove tasks, disable auto-logon, final reboot |
 | `core/Config.psm1` | 109 | 4.2 KB | Shared constants ($WD.*) -- single source of truth for paths and stage order |
 | `core/Debloat.ps1` | 278 | 9.9 KB | Stage 2: remove bloatware apps from bloatware.json lists |
@@ -46,19 +54,20 @@
 | `core/Monitor.ps1` | 303 | 10.5 KB | WPF progress window with stage list, Tailscale QR, error panel |
 | `core/Notify.ps1` | 179 | 7.3 KB | Tray notification on deployment completion, self-removes |
 | `core/Notify-Webhook.ps1` | 71 | 2.3 KB | Webhook notification for deployment events |
-| `core/Orchestrator.ps1` | 471 | 18.5 KB | Master controller -- runs stages in order, handles reboots |
+| `core/Orchestrator.ps1` | 496 | 19.3 KB | Master controller -- runs stages in order, handles reboots |
 | `core/PowerSettings.ps1` | 146 | 5.0 KB | Stage 1: power plan, sleep, and display timeout settings |
-| `core/RemoteAccess.ps1` | 229 | 8.7 KB | WinDeploy Stage: Remote Access |
+| `core/RemoteAccess.ps1` | 242 | 9.0 KB | WinDeploy Stage: Remote Access |
 | `core/Resilience.psm1` | 429 | 18.8 KB | Task self-healing, directory ACLs, state quarantine, watchdog |
-| `core/State.psm1` | 480 | 14.6 KB | State.json read/write, reboot counter, stage tracking |
-| `core/Tailscale.ps1` | 371 | 14.0 KB | Stage 6: Tailscale install + QR-based registration |
-| `core/WindowsUpdate.ps1` | 281 | 10.5 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
-| `core/WinTweaks.ps1` | 725 | 29.4 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
+| `core/State.psm1` | 493 | 15.0 KB | State.json read/write, reboot counter, stage tracking |
+| `core/Tailscale.ps1` | 474 | 18.5 KB | Stage 6: Tailscale install + QR-based registration |
+| `core/WindowsUpdate.ps1` | 295 | 11.1 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
+| `core/WinTweaks.ps1` | 726 | 29.5 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
 | | | | |
 | `data/bloatware.json` | 81 | 2.3 KB | Safe and optional app removal lists for Debloat stage |
 | `data/profiles.json` | 18 | 606 B | Deployment profile definitions |
 | | | | |
 | `docs/gpg-setup.md` | 144 | 3.2 KB | Instructions for generating GPG key pair for manifest signing |
 | | | | |
+| `tools/Get-WingetManifestFields.ps1` | 59 | 2.1 KB | Downloads an installer and prints the fields needed for a WINGET_MANIFEST |
 | `tools/Update-Index.ps1` | 226 | 10.4 KB | Generates INDEX.md file inventory (this script) |
 
