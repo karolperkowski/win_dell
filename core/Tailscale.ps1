@@ -264,12 +264,29 @@ function New-QRCodePng {
     return $false
 }
 
+# Matches the auth URLs Tailscale prints across known deployments:
+#   https://login.tailscale.com/a/<token>          (free / standard tenants)
+#   https://controlplane.tailscale.com/a/<token>   (newer / enterprise control plane)
+# Trailing punctuation (`.`, `,`, `;`, `)`) is stripped after the match.
+$Script:TS_AUTH_URL_REGEX = 'https?://(?:login|controlplane)\.tailscale\.com/[^\s"'']+'
+
 function Start-TailscaleUp {
     <#
     Runs 'tailscale up' as a background Process, captures output in real-time
-    via async event handlers, and returns the auth URL as soon as it appears.
-    The process is left running (it blocks until authenticated).
-    Returns the Process object and the auth URL.
+    via async event handlers, and stores any captured auth URL plus every
+    emitted line into a synchronized hashtable the caller can read.
+
+    Why a synchronized hashtable instead of $script: variables:
+        add_OutputDataReceived handlers fire on .NET thread-pool threads.
+        Setting $script:foo from there is unreliable in PS 5.1 -- the parent
+        polling loop sometimes never sees the assignment. A
+        [hashtable]::Synchronized wrapper guarantees the writes are visible.
+
+    The caller polls $Script:tsCapture.AuthUrl and reads $Script:tsCapture.Lines
+    for a diagnostic dump on timeout. The process is left running (it blocks
+    until the device is authenticated).
+
+    Returns the Process object.
     #>
     param([string]$ExtraArgs = '')
 
@@ -282,16 +299,23 @@ function Start-TailscaleUp {
         CreateNoWindow         = $true
     }
 
-    $script:capturedAuthUrl = $null
-    $outputBuffer = [System.Collections.Generic.List[string]]::new()
+    # Reset / initialise the shared capture state. Synchronized hashtable so
+    # the async handler threads and the main polling loop see the same writes.
+    $Script:tsCapture = [hashtable]::Synchronized(@{
+        AuthUrl = $null
+        Lines   = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
+    })
+    $rx = $Script:TS_AUTH_URL_REGEX
 
     $handler = {
-        param($s, $e)
+        param($src, $e)
         if ([string]::IsNullOrWhiteSpace($e.Data)) { return }
-        $outputBuffer.Add($e.Data)
-        $match = [regex]::Match($e.Data, 'https://login\.tailscale\.com/\S+')
-        if ($match.Success) {
-            $script:capturedAuthUrl = $match.Value.TrimEnd('.')
+        [void]$Script:tsCapture.Lines.Add($e.Data)
+        if (-not $Script:tsCapture.AuthUrl) {
+            $match = [regex]::Match($e.Data, $rx)
+            if ($match.Success) {
+                $Script:tsCapture.AuthUrl = $match.Value.TrimEnd('.', ',', ';', ')')
+            }
         }
     }
 
@@ -371,33 +395,84 @@ try {
         return @{ Status = 'Complete'; Message = "Tailscale registered: $name" }
     }
 
-    # ── Auth: interactive QR flow ──
-    Write-LogInfo "Starting 'tailscale up' - waiting for auth URL..."
+    # ── Auth: interactive QR flow with dual-condition wait ──
+    #
+    # Race three outcomes against each other instead of waiting for the auth
+    # URL alone. Three observed failure modes the old single-signal wait could
+    # not distinguish:
+    #   (a) Tailscale already had stored creds (e.g. prior unfinished session).
+    #       `tailscale up` proceeds silently, no URL printed, BackendState
+    #       flips to Running. Old loop timed out after 60s with no diagnostic.
+    #   (b) User authenticated out-of-band (separate browser, web admin).
+    #       Same observable as (a) from our side.
+    #   (c) URL printed in a format we don't match (e.g. controlplane.tailscale.com
+    #       for newer / enterprise tenants).
+    # The new loop exits when: URL captured OR BackendState=Running OR timeout.
+    # On timeout we dump every captured line so the next failure is debuggable.
+    Write-LogInfo "Starting 'tailscale up' - watching for auth URL OR registration..."
     $extraArgs = "$acceptRoutes $acceptDns".Trim()
     if ($hostname) { $extraArgs += " --hostname=$hostname" }
 
     $tsProc = Start-TailscaleUp -ExtraArgs $extraArgs
 
-    # Wait for the auth URL to appear in output (up to 60s)
-    $urlDeadline = (Get-Date).AddSeconds(60)
-    while (-not $script:capturedAuthUrl -and (Get-Date) -lt $urlDeadline) {
+    $urlCaptureSec = 60
+    $deadline      = (Get-Date).AddSeconds($urlCaptureSec)
+    $heartbeat     = (Get-Date).AddSeconds(10)
+    $authUrl       = $null
+    $alreadyAuthed = $false
+
+    while ((Get-Date) -lt $deadline) {
+        if ($Script:tsCapture.AuthUrl) {
+            $authUrl = $Script:tsCapture.AuthUrl
+            break
+        }
+        if (Test-TailscaleRegistered) {
+            $alreadyAuthed = $true
+            break
+        }
+        if ((Get-Date) -ge $heartbeat) {
+            $lineCount = @($Script:tsCapture.Lines).Count
+            Write-LogInfo "  ... still waiting (no URL captured, BackendState != Running, $lineCount line(s) of output so far)"
+            $heartbeat = (Get-Date).AddSeconds(10)
+        }
         Start-Sleep -Seconds 1
     }
 
-    if (-not $script:capturedAuthUrl) {
-        $tsProc.Kill()
-        throw 'Timed out waiting for Tailscale auth URL. Check Tailscale service logs.'
+    # Branch (a)/(b): registration completed before we ever saw a URL.
+    if ($alreadyAuthed) {
+        Write-LogSuccess 'Tailscale already authenticated (existing creds or out-of-band sign-in). Skipping QR flow.'
+        if (-not $tsProc.HasExited) {
+            $tsProc.WaitForExit(5000) | Out-Null
+            if (-not $tsProc.HasExited) { $tsProc.Kill() }
+        }
+        $machineName = Get-TailscaleMachineName
+        Write-TailscaleJson -Registered $true -MachineName $machineName
+        Write-LogSuccess "Tailscale registered as '$machineName'."
+        Close-Logger -FinalStatus 'SUCCESS'
+        return @{ Status = 'Complete'; Message = "Tailscale registered: $machineName" }
     }
 
-    Write-LogSuccess "Auth URL captured: $($script:capturedAuthUrl)"
+    # Branch (c): no URL AND not registered. Dump diagnostics + throw.
+    if (-not $authUrl) {
+        Write-LogError "No auth URL appeared in 'tailscale up' output within ${urlCaptureSec}s and BackendState is not Running."
+        Write-LogError "Captured output ($(@($Script:tsCapture.Lines).Count) line(s)):"
+        foreach ($line in @($Script:tsCapture.Lines)) {
+            Write-LogError "  [tailscale up] $line"
+        }
+        if (-not $tsProc.HasExited) { $tsProc.Kill() }
+        throw "Timed out waiting for Tailscale auth URL after ${urlCaptureSec}s. See log for raw tailscale-up output."
+    }
+
+    # Branch (d): URL captured, generate QR and poll for registration.
+    Write-LogSuccess "Auth URL captured: $authUrl"
 
     # ── Generate QR ──
-    $qrGenerated = New-QRCodePng -Data $script:capturedAuthUrl -OutputPath $TS_QR_PNG
+    $qrGenerated = New-QRCodePng -Data $authUrl -OutputPath $TS_QR_PNG
 
     # ── Write tailscale.json so monitor can display it immediately ──
     $qrPath = if ($qrGenerated) { $TS_QR_PNG } else { '' }
     Write-TailscaleJson `
-        -AuthUrl    $script:capturedAuthUrl `
+        -AuthUrl    $authUrl `
         -QrPath     $qrPath `
         -Registered $false
 
@@ -432,7 +507,7 @@ try {
     }
 
     $machineName = Get-TailscaleMachineName
-    Write-TailscaleJson -AuthUrl $script:capturedAuthUrl -QrPath $TS_QR_PNG -Registered $true -MachineName $machineName
+    Write-TailscaleJson -AuthUrl $authUrl -QrPath $TS_QR_PNG -Registered $true -MachineName $machineName
     Write-LogSuccess "Tailscale registered as '$machineName'."
 
     Close-Logger -FinalStatus 'SUCCESS'

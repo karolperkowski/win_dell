@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 41 |
-| PowerShell | 26 files, 7,469 lines |
-| Total size | 336 KB |
+| PowerShell | 26 files, 7,544 lines |
+| Total size | 339 KB |
 
 ## Files
 
@@ -51,7 +51,7 @@
 | `core/RemoteAccess.ps1` | 242 | 9.0 KB | WinDeploy Stage: Remote Access |
 | `core/Resilience.psm1` | 429 | 18.8 KB | Task self-healing, directory ACLs, state quarantine, watchdog |
 | `core/State.psm1` | 534 | 16.4 KB | State.json read/write, reboot counter, stage tracking |
-| `core/Tailscale.ps1` | 446 | 17.3 KB | Stage 6: Tailscale install + QR-based registration |
+| `core/Tailscale.ps1` | 521 | 21.0 KB | Stage 6: Tailscale install + QR-based registration |
 | `core/WindowsUpdate.ps1` | 295 | 11.1 KB | Stage 7: Windows Update (last -- multiple reboots expected) |
 | `core/Winget.psm1` | 220 | 8.4 KB | Winget interaction helpers - single canonical place to own: |
 | `core/WinTweaks.ps1` | 870 | 36.4 KB | Stage 3: registry tweaks, dark theme, DPI, Chrome, WinUtil preset |
