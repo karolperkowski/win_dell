@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repository": "karolperkowski/win_dell",
   "branch": "main",
-  "commit_sha": "43337fa744b68c255807e95ac442f2f67605e7e0",
-  "zip_url": "https://github.com/karolperkowski/win_dell/archive/43337fa744b68c255807e95ac442f2f67605e7e0.zip",
-  "zip_sha256": "badd7a22bf9678c1be3581c9ce947e473dccf91a0a885a73ff13814c3b85cee8",
-  "generated_at": "2026-05-16T23:00:06.9301598+00:00"
+  "commit_sha": "b7edf671a6add00bd3b2f6139d5c6fd331271938",
+  "zip_url": "https://github.com/karolperkowski/win_dell/archive/b7edf671a6add00bd3b2f6139d5c6fd331271938.zip",
+  "zip_sha256": "c753daf58ed76fb61b1c116b79d4dcc52b4af8500b5310f6635307cae6b6e27f",
+  "generated_at": "2026-05-16T23:20:19.1998519+00:00"
 }
