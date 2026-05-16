@@ -66,6 +66,13 @@ $Script:STAGE_LABELS = [ordered]@{
 # Stages that are permitted to return 'RebootRequired' to the orchestrator
 $Script:REBOOT_ALLOWED_STAGES = @('WindowsUpdate', 'InstallTailscale', 'Cleanup')
 
+# Stages that should re-run on every orchestrator boot until they self-report
+# Complete with no work left to do — bypasses the one-shot Test-StageComplete
+# short-circuit. Used for drains where late-arriving items can show up after
+# a stage was last marked Complete (e.g. cascaded Windows Updates,
+# servicing-stack-triggered cumulative installs that only surface post-reboot).
+$Script:DRAIN_STAGES = @('WindowsUpdate')
+
 # ---------------------------------------------------------------------------
 # Stage-specific tunables
 # ---------------------------------------------------------------------------
@@ -95,6 +102,7 @@ $Script:_config = [PSCustomObject]@{
     StageOrder          = $Script:STAGE_ORDER
     StageLabels         = $Script:STAGE_LABELS
     RebootAllowedStages = $Script:REBOOT_ALLOWED_STAGES
+    DrainStages         = $Script:DRAIN_STAGES
     WinUtilTimeoutMs    = $Script:WINUTIL_TIMEOUT_MS
 }
 

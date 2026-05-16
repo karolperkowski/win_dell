@@ -120,6 +120,15 @@ $Script:STAGE_SCRIPTS = [ordered]@{
 }
 
 $Script:REBOOT_ALLOWED_STAGES    = $Script:WD.RebootAllowedStages
+# Drain stages re-run on every orchestrator boot — WindowsUpdate, for example,
+# can have cascaded items appear after the last cycle marked it Complete, so we
+# rescan on every boot and the stage no-ops fast if pending count is already 0.
+$Script:DRAIN_STAGES             = @()
+try {
+    if ($Script:WD.PSObject.Properties.Name -contains 'DrainStages' -and $Script:WD.DrainStages) {
+        $Script:DRAIN_STAGES = @($Script:WD.DrainStages)
+    }
+} catch { $Script:DRAIN_STAGES = @() }
 $Script:MAX_CONSECUTIVE_FAILURES = 3
 $Script:TROUBLESHOOT_PS1         = Join-Path $Script:RepoRoot 'tools\Troubleshoot.ps1'
 
@@ -448,10 +457,15 @@ Initialize-Logger -Stage 'Orchestrator'
     foreach ($stageName in $Script:STAGE_SCRIPTS.Keys) {
         $scriptPath = $Script:STAGE_SCRIPTS[$stageName]
 
-        # Skip completed stages
-        if (Test-StageComplete -StageName $stageName) {
+        # Skip completed stages — except drain stages, which re-run every boot
+        # and rely on their own internal idempotency to no-op when there's no
+        # work left to do (cheap rescan if already drained).
+        if ((Test-StageComplete -StageName $stageName) -and ($stageName -notin $Script:DRAIN_STAGES)) {
             Write-LogInfo "Stage '$stageName' already complete - skipping."
             continue
+        }
+        if ((Test-StageComplete -StageName $stageName) -and ($stageName -in $Script:DRAIN_STAGES)) {
+            Write-LogInfo "Stage '$stageName' marked complete but is a drain stage - re-running to check for new work."
         }
 
         # Pre-stage health checks

@@ -4,8 +4,15 @@
   "Stages": {
     "WindowsUpdate": {
       "ContinueOnError": false,
-      "MaxCycles": 5,
-      "TimeoutMinutes": 180
+      "MaxCycles": 8,
+      "TimeoutMinutes": 240,
+      "_comment_Engine": "Primary engine = native Windows Update Agent COM API (Microsoft.Update.Session). PSWindowsUpdate is only used as a fallback if COM session creation fails.",
+      "IncludeMicrosoftUpdate": true,
+      "IncludeDrivers": true,
+      "IncludeOptional": true,
+      "_comment_DCU": "After Windows Update drains to zero pending, run Dell Command | Update for BIOS / firmware / OEM drivers that don't flow through Microsoft Update.",
+      "RunDellCommandUpdate": true,
+      "InstallDellCommandUpdateIfMissing": true
     },
     "PowerSettings": {
       "ContinueOnError": false,

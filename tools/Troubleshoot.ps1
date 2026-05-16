@@ -257,6 +257,194 @@ function Invoke-StatusAction {
 # read $Script:* paths declared at the top of this file.
 # ---------------------------------------------------------------------------
 $Script:StagePlugins = @{
+    'WindowsUpdate' = @{
+        Diagnose = {
+            Write-Host '=== WindowsUpdate diagnostic ===' -ForegroundColor Cyan
+
+            # 1. Pending count via the same COM API the stage uses.
+            $msUpdateId = '7971f918-a847-4430-9279-4a52d1efe18d'
+            try {
+                $sm = New-Object -ComObject Microsoft.Update.ServiceManager
+                $muRegistered = $false
+                foreach ($svc in $sm.Services) {
+                    if ($svc.ServiceID -eq $msUpdateId) { $muRegistered = $true; break }
+                }
+                Write-Host ("Microsoft Update registered : {0}" -f $muRegistered)
+
+                $session = New-Object -ComObject Microsoft.Update.Session
+                $session.ClientApplicationID = 'WinDeploy-Troubleshoot'
+                $searcher = $session.CreateUpdateSearcher()
+                if ($muRegistered) {
+                    $searcher.ServerSelection = 3
+                    $searcher.ServiceID       = $msUpdateId
+                }
+                $result = $searcher.Search("IsInstalled=0 and IsHidden=0 and (Type='Software' or Type='Driver')")
+                Write-Host ("Pending updates             : {0}" -f $result.Updates.Count)
+                if ($result.Updates.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "Pending titles:"
+                    for ($i = 0; $i -lt $result.Updates.Count; $i++) {
+                        $u = $result.Updates.Item($i)
+                        $kb = ''
+                        try {
+                            if ($u.KBArticleIDs.Count -gt 0) { $kb = 'KB' + $u.KBArticleIDs.Item(0) }
+                        } catch { $kb = '' }
+                        Write-Host ("  [{0,3}] {1,-10} {2}" -f ($i + 1), $kb, $u.Title)
+                    }
+                }
+            } catch {
+                Write-Host "  COM scan error: $($_.Exception.Message)" -ForegroundColor Red
+            }
+
+            # 2. Reboot-pending registry probe
+            $rebootReasons = @()
+            if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {
+                $rebootReasons += 'WindowsUpdate registry key'
+            }
+            if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {
+                $rebootReasons += 'CBS RebootPending'
+            }
+            try {
+                $pfro = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' `
+                                              -Name 'PendingFileRenameOperations' -ErrorAction Stop
+                if ($pfro) { $rebootReasons += 'PendingFileRenameOperations' }
+            } catch { }
+            $rebootSummary = 'no'
+            if (@($rebootReasons).Count -gt 0) { $rebootSummary = $rebootReasons -join ', ' }
+            Write-Host ""
+            Write-Host ("Reboot pending              : {0}" -f $rebootSummary)
+
+            # 3. wuauserv service state
+            $wu = Get-Service wuauserv -ErrorAction SilentlyContinue
+            if ($wu) {
+                Write-Host ("wuauserv                    : Status={0}, StartType={1}" -f $wu.Status, $wu.StartType)
+            }
+            $bits = Get-Service bits -ErrorAction SilentlyContinue
+            if ($bits) {
+                Write-Host ("BITS                        : Status={0}, StartType={1}" -f $bits.Status, $bits.StartType)
+            }
+
+            # 4. WindowsUpdate_* StageExtras from state.json
+            if (Test-Path $Script:StateFile) {
+                try {
+                    $state = Get-Content $Script:StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($state.PSObject.Properties.Name -contains 'StageExtras' -and $state.StageExtras) {
+                        Write-Host ""
+                        Write-Host "StageExtras (WindowsUpdate_*):"
+                        foreach ($p in $state.StageExtras.PSObject.Properties) {
+                            if ($p.Name -like 'WindowsUpdate_*') {
+                                Write-Host ("  {0,-40} {1}" -f $p.Name, $p.Value)
+                            }
+                        }
+                    }
+                } catch {
+                    Write-Host "  state.json parse failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+
+            # 5. Latest DCU scan/apply log tails
+            foreach ($pat in @('dcu-scan-*.log','dcu-apply-*.log')) {
+                $log = Get-ChildItem -Path $Script:LogDir -Filter $pat -ErrorAction SilentlyContinue |
+                       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($log) {
+                    Write-Host ""
+                    Write-Host "Latest $($log.Name) (last 20 lines):"
+                    Get-Content $log.FullName -Tail 20 -ErrorAction SilentlyContinue
+                }
+            }
+
+            # 6. Latest WindowsUpdate stage log tail
+            $stageLog = Get-ChildItem -Path $Script:LogDir -Filter 'WindowsUpdate_*.log' -ErrorAction SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($stageLog) {
+                Write-Host ""
+                Write-Host "Latest stage log: $($stageLog.FullName)"
+                Get-Content $stageLog.FullName -Tail 25 -ErrorAction SilentlyContinue
+            }
+        }
+
+        Repair = {
+            Write-Host '=== WindowsUpdate repair ===' -ForegroundColor Cyan
+
+            Write-Host '[1/6] Stopping wuauserv + bits + cryptsvc...'
+            foreach ($svc in @('wuauserv','bits','cryptsvc')) {
+                try {
+                    Stop-Service $svc -Force -ErrorAction Stop
+                    Write-Host "      Stopped $svc" -ForegroundColor Green
+                } catch {
+                    Write-Host "      $svc stop failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+
+            Write-Host '[2/6] Clearing SoftwareDistribution\Download cache...'
+            $sd = 'C:\Windows\SoftwareDistribution\Download'
+            if (Test-Path $sd) {
+                try {
+                    Get-ChildItem $sd -Force -ErrorAction SilentlyContinue |
+                        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host '      Cache cleared.' -ForegroundColor Green
+                } catch {
+                    Write-Host "      Cache clear partial: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+
+            Write-Host '[3/6] Clearing catroot2...'
+            $cr = 'C:\Windows\System32\catroot2'
+            if (Test-Path $cr) {
+                try {
+                    Get-ChildItem $cr -Force -ErrorAction SilentlyContinue |
+                        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host '      catroot2 cleared.' -ForegroundColor Green
+                } catch {
+                    Write-Host "      catroot2 clear partial: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+
+            Write-Host '[4/6] Starting services back up...'
+            foreach ($svc in @('cryptsvc','bits','wuauserv')) {
+                try {
+                    Start-Service $svc -ErrorAction Stop
+                    Write-Host "      Started $svc" -ForegroundColor Green
+                } catch {
+                    Write-Host "      $svc start failed: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+
+            Write-Host '[5/6] Re-registering Microsoft Update service...'
+            try {
+                $sm = New-Object -ComObject Microsoft.Update.ServiceManager
+                $null = $sm.AddService2('7971f918-a847-4430-9279-4a52d1efe18d', 7, '')
+                Write-Host '      Microsoft Update re-registered.' -ForegroundColor Green
+            } catch {
+                Write-Host "      Failed: $($_.Exception.Message)" -ForegroundColor Red
+            }
+
+            Write-Host '[6/6] Resetting WindowsUpdate stage in state.json...'
+            try {
+                if (Test-Path $Script:StateFile) {
+                    $raw = Get-Content $Script:StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($raw.CompletedStages -contains 'WindowsUpdate') {
+                        $raw.CompletedStages = @($raw.CompletedStages | Where-Object { $_ -ne 'WindowsUpdate' })
+                    }
+                    if ($raw.PSObject.Properties.Name -contains 'StageExtras' -and $raw.StageExtras) {
+                        if ($raw.StageExtras.PSObject.Properties.Name -contains 'WindowsUpdate_CycleCount') {
+                            $raw.StageExtras.WindowsUpdate_CycleCount = 0
+                        }
+                    }
+                    $raw | ConvertTo-Json -Depth 10 | Set-Content -Path $Script:StateFile -Encoding UTF8 -Force
+                    Write-Host '      state.json reset (WindowsUpdate will re-run).' -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "      state.json reset failed: $($_.Exception.Message)" -ForegroundColor Red
+                return $false
+            }
+
+            Write-Host ''
+            Write-Host 'Repair complete. Re-run orchestrator or start WinDeploy-Resume to pick up the rescan.'
+            return $true
+        }
+    }
+
     'InstallTailscale' = @{
         Diagnose = {
             $tsExe = 'C:\Program Files\Tailscale\tailscale.exe'
