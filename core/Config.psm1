@@ -38,6 +38,7 @@ $Script:TASK_WATCHDOG = 'WinDeploy-Watchdog'
 # Pipeline: canonical stage order and display labels
 # ---------------------------------------------------------------------------
 $Script:STAGE_ORDER = @(
+    'TimeSync'
     'PowerSettings'
     'Debloat'
     'WinTweaks'
@@ -51,6 +52,7 @@ $Script:STAGE_ORDER = @(
 )
 
 $Script:STAGE_LABELS = [ordered]@{
+    TimeSync                 = 'Time Sync'
     PowerSettings            = 'Power Settings'
     Debloat                  = 'Debloat'
     WinTweaks                = 'Windows Tweaks'

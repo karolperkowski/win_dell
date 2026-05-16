@@ -107,6 +107,7 @@ $Script:TASK_NAME = $Script:WD.TaskResume
 
 # Stage map: name → script. Execution order is driven by $WD.StageOrder in State.psm1.
 $Script:STAGE_SCRIPTS = [ordered]@{
+    TimeSync                 = Join-Path $Script:CoreDir 'TimeSync.ps1'
     PowerSettings            = Join-Path $Script:CoreDir 'PowerSettings.ps1'
     Debloat                  = Join-Path $Script:CoreDir 'Debloat.ps1'
     WinTweaks                = Join-Path $Script:CoreDir 'WinTweaks.ps1'

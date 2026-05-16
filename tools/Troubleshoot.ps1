@@ -257,6 +257,135 @@ function Invoke-StatusAction {
 # read $Script:* paths declared at the top of this file.
 # ---------------------------------------------------------------------------
 $Script:StagePlugins = @{
+    'TimeSync' = @{
+        Diagnose = {
+            Write-Host '=== TimeSync diagnostic ===' -ForegroundColor Cyan
+
+            Write-Host ''
+            Write-Host '--- Current local time ---'
+            Write-Host (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')
+
+            Write-Host ''
+            Write-Host '--- tzutil /g ---'
+            & tzutil.exe /g
+
+            Write-Host ''
+            Write-Host '--- RealTimeIsUniversal ---'
+            try {
+                $rtu = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' `
+                                        -Name 'RealTimeIsUniversal' -ErrorAction Stop
+                Write-Host "  RealTimeIsUniversal = $($rtu.RealTimeIsUniversal)"
+                if ($rtu.RealTimeIsUniversal -ne 0) {
+                    Write-Host '  WARNING: BIOS clock is being interpreted as UTC. On a single-boot' -ForegroundColor Yellow
+                    Write-Host '           Windows machine this usually shifts the wall clock by the' -ForegroundColor Yellow
+                    Write-Host '           timezone offset. Run -Action Repair -Stage TimeSync to fix.' -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host '  RealTimeIsUniversal not set (default — BIOS = local time).' -ForegroundColor Green
+            }
+
+            Write-Host ''
+            Write-Host '--- w32time service ---'
+            $svc = Get-Service w32time -ErrorAction SilentlyContinue
+            if ($svc) {
+                Write-Host "  Status=$($svc.Status), StartType=$($svc.StartType)"
+            } else {
+                Write-Host '  w32time service NOT REGISTERED' -ForegroundColor Red
+            }
+
+            Write-Host ''
+            Write-Host '--- w32tm /query /status ---'
+            & w32tm.exe /query /status 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+            Write-Host ''
+            Write-Host '--- w32tm /query /configuration ---'
+            & w32tm.exe /query /configuration 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+            Write-Host ''
+            Write-Host '--- w32tm /query /peers ---'
+            & w32tm.exe /query /peers 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+            # TimeSync_* StageExtras
+            if (Test-Path $Script:StateFile) {
+                try {
+                    $state = Get-Content $Script:StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($state.PSObject.Properties.Name -contains 'StageExtras' -and $state.StageExtras) {
+                        Write-Host ''
+                        Write-Host 'StageExtras (TimeSync_*):'
+                        foreach ($p in $state.StageExtras.PSObject.Properties) {
+                            if ($p.Name -like 'TimeSync_*') {
+                                Write-Host ("  {0,-40} {1}" -f $p.Name, $p.Value)
+                            }
+                        }
+                    }
+                } catch {
+                    Write-Host "  state.json parse failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+
+            # Latest TimeSync stage log tail
+            $log = Get-ChildItem -Path $Script:LogDir -Filter 'TimeSync_*.log' -ErrorAction SilentlyContinue |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($log) {
+                Write-Host ''
+                Write-Host "Latest log: $($log.FullName)"
+                Get-Content $log.FullName -Tail 25 -ErrorAction SilentlyContinue
+            }
+        }
+
+        Repair = {
+            Write-Host '=== TimeSync repair ===' -ForegroundColor Cyan
+
+            Write-Host '[1/5] Clearing RealTimeIsUniversal (BIOS clock = local time)...'
+            try {
+                Remove-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' `
+                                    -Name 'RealTimeIsUniversal' -Force -ErrorAction Stop
+                Write-Host '      Cleared.' -ForegroundColor Green
+            } catch {
+                Write-Host '      Already cleared (or never set).' -ForegroundColor Green
+            }
+
+            Write-Host '[2/5] Unregistering and re-registering w32time...'
+            try {
+                & w32tm.exe /unregister 2>&1 | Out-Null
+                & w32tm.exe /register 2>&1 | Out-Null
+                Write-Host '      Done.' -ForegroundColor Green
+            } catch {
+                Write-Host "      Failed: $($_.Exception.Message)" -ForegroundColor Red
+            }
+
+            Write-Host '[3/5] Setting w32time to Automatic (Delayed Start) and starting it...'
+            try {
+                & sc.exe config w32time start= delayed-auto | Out-Null
+                Start-Service w32time -ErrorAction Stop
+                Write-Host "      w32time is $((Get-Service w32time).Status)." -ForegroundColor Green
+            } catch {
+                Write-Host "      Failed: $($_.Exception.Message)" -ForegroundColor Red
+                return $false
+            }
+
+            Write-Host '[4/5] Configuring NTP peers and updating...'
+            $peers = 'time.google.com,0x9 time.cloudflare.com,0x9 time.windows.com,0x9 pool.ntp.org,0x9'
+            $out = & w32tm.exe /config /manualpeerlist:"$peers" /syncfromflags:manual /reliable:no /update 2>&1
+            Write-Host "      $($out -join ' ')"
+
+            Write-Host '[5/5] Forcing resync...'
+            for ($i = 1; $i -le 3; $i++) {
+                $r = & w32tm.exe /resync /rediscover 2>&1
+                Write-Host "      Attempt $i`: $($r -join ' ')"
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host '      Resync succeeded.' -ForegroundColor Green
+                    break
+                }
+                Start-Sleep -Seconds 10
+            }
+
+            Write-Host ''
+            Write-Host 'Current time: ' (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')
+            return $true
+        }
+    }
+
     'WindowsUpdate' = @{
         Diagnose = {
             Write-Host '=== WindowsUpdate diagnostic ===' -ForegroundColor Cyan

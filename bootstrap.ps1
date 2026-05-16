@@ -203,7 +203,7 @@ try {
             LastUpdatedAt          = (Get-Date -Format 'o')
             RepoRoot               = $localRepo
             ConfigFile             = Join-Path $localRepo 'config\settings.json'
-            CurrentStage           = 'PowerSettings'
+            CurrentStage           = 'TimeSync'
             CompletedStages        = @()
             FailedStages           = @()
             StageTimestamps        = @{}

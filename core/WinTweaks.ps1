@@ -796,7 +796,6 @@ function Set-AdditionalTweaks {
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location' 'Value' 'Deny' String
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' 'AllowGameDVR' 0
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0
-    Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' 'RealTimeIsUniversal' 1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
 
     # Per-user tweaks
@@ -810,17 +809,7 @@ function Set-AdditionalTweaks {
         Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" 'TaskbarEndTask' 1
     }
 
-    # Timezone
-    $timezone = 'Eastern Standard Time'
-    if ($Config['WinTweaks'] -and $Config['WinTweaks']['Timezone']) {
-        $timezone = $Config['WinTweaks']['Timezone']
-    }
-    try {
-        & tzutil.exe /s $timezone
-        Write-LogInfo "  Timezone set to $timezone"
-    } catch {
-        Write-LogWarning "  tzutil failed: $($_.Exception.Message)"
-    }
+    # Timezone is owned by the TimeSync stage (runs before this one).
 }
 
 # ---------------------------------------------------------------------------
