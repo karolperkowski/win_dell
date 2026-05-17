@@ -151,50 +151,53 @@ To add a new stage, extend `$Script:StagePlugins` in `tools/Troubleshoot.ps1` wi
 
 ---
 
-## WinUtil outcome legibility (WinTweaks Pass 1)
+## WinUtil direct-apply (WinTweaks Pass 1)
 
-The WinTweaks stage runs Chris Titus's WinUtil in Pass 1 against `config/winutil-preset.json`. Pass 2 (direct registry tweaks) always runs regardless — so an empty/silent WinUtil run will still leave WinTweaks marked SUCCESS. To distinguish "WinUtil applied N tweaks" from "WinUtil silently did nothing", the child script writes a transcript and a structured meta JSON; the parent ingests both. **Always check these on a real-machine run before concluding WinUtil worked.**
+The WinTweaks stage's Pass 1 used to launch Chris Titus's WinUtil with `-Run -Noui` and let WinUtil's own runner apply the preset. **That path is broken for unattended use** and always timed out: `Invoke-WinUtilAutoRun` polls `$sync.ProcessRunning` (set true at the top of a background runspace, false only at the bottom). The runspace calls UI helpers like `Set-WinUtilProgressBar` which aren't defined in headless mode, so the flag stays true forever and the parent loops until the 12-minute kill. The GUI-with-auto-close-patch path had the same root cause via a different route. Observed 2026-04-10: both paths timed out on the first real-machine run, Pass 2 saved the stage.
 
-**Files produced per WinTweaks run** (one pair per orchestrator invocation, kept for post-mortem):
+**Current approach (since 2026-05-17):** Pass 1 downloads the WinUtil bundle, extracts the embedded `$sync.configs.tweaks` and `$sync.configs.feature` JSON heredocs by regex, and applies each preset ID's `registry` / `service` / `feature` / `InvokeScript` entries directly using our own helpers — synchronously, in our SYSTEM context, no GUI, no runspace, no dispatcher. The bundle URL list (`$Script:WinUtilBundleUrls` in `core/WinTweaks.ps1`) tries the GitHub release first, falls back to `christitus.com/win`.
 
-- `C:\ProgramData\WinDeploy\Logs\winutil-child-<guid>.log` — full transcript of the child PowerShell, including bundle download size, regex hit count, preset-vs-bundle ID diff, and exit code.
-- `C:\ProgramData\WinDeploy\Logs\winutil-child-<guid>.meta.json` — structured outcome record.
+**Why this is robust:**
 
-**Verification commands** (run after WinTweaks has executed at least once):
-
-```powershell
-# All WinUtil sub-status from the latest state.
-Get-Content C:\ProgramData\WinDeploy\state.json -Raw |
-    ConvertFrom-Json |
-    Select-Object -ExpandProperty StageExtras |
-    Format-List WinTweaks_*
-
-# Most recent child transcript.
-Get-ChildItem C:\ProgramData\WinDeploy\Logs\winutil-child-*.log |
-    Sort-Object LastWriteTime |
-    Select-Object -Last 1 |
-    Get-Content
-
-# Summary lines in the main log.
-Select-String -Path C:\ProgramData\WinDeploy\Logs\windeploy.log `
-    -Pattern 'WinUtil outcome|Unknown preset|auto-close patch'
-```
+1. WinUtil's `-Noui` runner is the broken part; the JSON tweak/feature definitions are not. We use the latter, ignore the former.
+2. `HKCU:` paths in the bundle are rewritten to every mounted user hive (`Get-AllUserRoots`) — so per-user tweaks reach real users despite running as SYSTEM. Hives are mounted once in Main before both passes.
+3. `Set-WinUtilServiceEntry` normalizes WinUtil's quirks: `"Disable"` (typo in their data) → `"Disabled"`, and `"AutomaticDelayedStart"` → `sc.exe config <svc> start= delayed-auto` (Set-Service's `-StartupType` doesn't accept it on PS 5.1).
+4. `Enable-WinUtilWindowsFeature` uses `-NoRestart -All` so feature enables never trigger an out-of-band reboot — the orchestrator owns reboots.
+5. `Invoke-WinUtilScriptEntry` runs each `InvokeScript` string in a try/catch and streams output through `Write-LogInfo`, so one bad script can't sink the whole pass.
+6. `WPFInstall*` IDs are deliberately skipped — installs are owned by `data/profiles.json` + `Install-WingetApps`. If a re-exported preset includes installs they're ignored, not double-applied.
 
 **`StageExtras` keys to inspect:**
 
 | Key | Healthy value | What it tells you |
 | --- | --- | --- |
-| `WinTweaks_WinUtilLaunchMode` | `gui-autoclose` | `headless-noui` = no user session; `gui-patch-miss-headless-fallback` = upstream renamed `Invoke-WinUtilAutoRun`, regex needs an update |
-| `WinTweaks_WinUtilAutoClosePatchHits` | `>= 1` | `0` means the regex matched no call sites — patched bundle was not used, headless `-Noui` ran instead |
-| `WinTweaks_WinUtilPresetIdCount` | matches the preset file length | Total IDs read from `config/winutil-preset.json` |
-| `WinTweaks_WinUtilKnownIdCount` | equal to `PresetIdCount` | IDs that exist in the live bundle |
-| `WinTweaks_WinUtilUnknownPresetIds` | empty array | Anything listed here was silently dropped by WinUtil — upstream renamed an ID and the preset needs refreshing |
-| `WinTweaks_WinUtilBundleIdCount` | several hundred (sanity) | If `0`, bundle-ID extraction regex failed — investigate the regex against the current bundle |
-| `WinTweaks_WinUtilExitReason` | `gui-exit-0` | Anything else (`headless-inline-exit-...`, `exception: ...`) tells you which fallback path ran |
+| `WinTweaks_WinUtilOutcome` | `direct-apply` | Anything else (`skipped: preset missing`, `bundle-download-failed: ...`, `bundle-parse-failed: ...`) tells you why Pass 1 couldn't run |
+| `WinTweaks_WinUtilPresetIdCount` | matches `config/winutil-preset.json` length | Total IDs parsed from the preset |
+| `WinTweaks_WinUtilAppliedCount` | `PresetIdCount` minus skipped/unknown | IDs that resolved and were applied |
+| `WinTweaks_WinUtilSkippedCount` | usually `0` | Count of `WPFInstall*` IDs skipped (installs are owned by `data/profiles.json`) |
+| `WinTweaks_WinUtilUnknownPresetIds` | empty array | Anything listed here was renamed/removed upstream — refresh the preset |
 
-**To refresh the preset:** run WinUtil interactively (`irm https://christitus.com/win | iex` from an elevated PowerShell), tick the desired Tweaks/Features/Installs, File menu → **Export Preset**, and overwrite `config/winutil-preset.json`. WinUtil's exporter writes UTF-16 LE with BOM — the child reads via `[System.IO.File]::ReadAllText` which auto-detects BOM, so no manual conversion is needed. Both flat-array (`["WPFTweaksX",...]`) and nested-object (`{"WPFTweaks":[...],"WPFInstall":[...],"WPFFeature":[...]}`) formats are accepted.
+**Verification commands** (run after WinTweaks has executed at least once):
 
-**Installs ownership:** installs (winget) are owned by `data/profiles.json` + `Install-WingetApps` in `WinTweaks.ps1`, not by WinUtil. If you re-export a preset, leave the WPFInstall section empty so installs flow through the path with idempotency, logging, and exit-code handling we control.
+```powershell
+# All WinTweaks sub-status from the latest state.
+Get-Content C:\ProgramData\WinDeploy\state.json -Raw |
+    ConvertFrom-Json |
+    Select-Object -ExpandProperty StageExtras |
+    Format-List WinTweaks_*
+
+# Per-tweak apply lines in the stage log.
+Select-String -Path C:\ProgramData\WinDeploy\Logs\WinTweaks_*.log `
+    -Pattern 'WinUtil direct apply|applying|unknown|InvokeScript'
+```
+
+**To refresh the preset:** run WinUtil interactively (`irm https://christitus.com/win | iex` from an elevated PowerShell), tick the desired Tweaks/Features, File menu → **Export Preset**, and overwrite `config/winutil-preset.json`. WinUtil's exporter writes UTF-16 LE with BOM — `Get-WinUtilPresetIds` uses `[System.IO.File]::ReadAllText` which auto-detects BOM, so no manual conversion. Both flat-array (`["WPFTweaksX",...]`) and nested-object (`{"WPFTweaks":[...],"WPFFeature":[...]}`) formats are accepted. After refreshing, run `tools/Test-WinUtilDirectApply.ps1` to confirm every preset ID still resolves against the current bundle (catches upstream renames before they hit production).
+
+**Testing the direct-apply path:**
+
+- `tools/Test-WinUtilDirectApply.ps1` — dry-run that downloads the bundle, parses configs, and reports what each preset ID would do (no writes). Use after re-exporting the preset or after a major WinUtil upstream change.
+- `tools/Test-WinUtilApplyOne.ps1 [-TweakId WPFToggleDetailedBSoD]` — real-apply smoke test against a single preset ID. Snapshots the registry/service, applies, verifies, reverts. Use to validate the apply primitives on real hardware without triggering slow tweaks (cleanmgr, restore-point).
+
+**Installs ownership:** installs (winget) are owned by `data/profiles.json` + `Install-WingetApps` in `WinTweaks.ps1`, not by WinUtil. If you re-export a preset, leave the WPFInstall section empty — even if present, Pass 1 will skip those IDs.
 
 ---
 

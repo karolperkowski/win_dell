@@ -38,211 +38,26 @@ Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
 Import-Module (Join-Path $coreDir 'Config.psm1')  -DisableNameChecking -Force
 Import-Module (Join-Path $coreDir 'State.psm1')   -DisableNameChecking -Force
 Import-Module (Join-Path $coreDir 'Winget.psm1')  -DisableNameChecking -Force
-$WD = Get-WDConfig
 Initialize-Logger -Stage $StageName
 
 # ---------------------------------------------------------------------------
-# Win32 helper: launch a process in the logged-in user's desktop session
+# WinUtil applier strategy
 # ---------------------------------------------------------------------------
-# When running as SYSTEM we have no desktop. To show WinUtil's GUI on the
-# real user's screen we must: get the console session → query the user token
-# → obtain the linked elevated token (UAC) → CreateProcessAsUser targeting
-# winsta0\Default.  Falls back gracefully if no user is logged in.
-
-if (-not ('WinDeploy.SessionLauncher' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-
-namespace WinDeploy
-{
-    public class SessionLauncher
-    {
-        // --- kernel32 ---
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern uint WTSGetActiveConsoleSessionId();
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool CloseHandle(IntPtr h);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern uint WaitForSingleObject(IntPtr h, uint ms);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool GetExitCodeProcess(IntPtr h, out uint code);
-
-        // --- wtsapi32 ---
-        [DllImport("wtsapi32.dll", SetLastError = true)]
-        public static extern bool WTSQueryUserToken(uint sessionId, out IntPtr token);
-
-        // --- advapi32 ---
-        [DllImport("advapi32.dll", SetLastError = true)]
-        public static extern bool DuplicateTokenEx(
-            IntPtr hToken, uint access, IntPtr sa,
-            int impersonation, int tokenType, out IntPtr newToken);
-
-        [DllImport("advapi32.dll", SetLastError = true)]
-        public static extern bool GetTokenInformation(
-            IntPtr token, int infoClass, out IntPtr info, int len, out int retLen);
-
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern bool CreateProcessAsUserW(
-            IntPtr hToken, string app, string cmdLine,
-            IntPtr procAttr, IntPtr threadAttr, bool inherit,
-            uint flags, IntPtr env, string cwd,
-            ref STARTUPINFO si, out PROCESS_INFORMATION pi);
-
-        // --- userenv ---
-        [DllImport("userenv.dll", SetLastError = true)]
-        public static extern bool CreateEnvironmentBlock(out IntPtr env, IntPtr token, bool inherit);
-
-        [DllImport("userenv.dll")]
-        public static extern bool DestroyEnvironmentBlock(IntPtr env);
-
-        // --- structs ---
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        public struct STARTUPINFO
-        {
-            public int    cb;
-            public string lpReserved;
-            public string lpDesktop;
-            public string lpTitle;
-            public int dwX, dwY, dwXSize, dwYSize;
-            public int dwXCountChars, dwYCountChars, dwFillAttribute;
-            public int    dwFlags;
-            public short  wShowWindow;
-            public short  cbReserved2;
-            public IntPtr lpReserved2;
-            public IntPtr hStdInput, hStdOutput, hStdError;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct PROCESS_INFORMATION
-        {
-            public IntPtr hProcess;
-            public IntPtr hThread;
-            public uint   dwProcessId;
-            public uint   dwThreadId;
-        }
-
-        // --- constants ---
-        public const uint TOKEN_ALL  = 0x000F01FF;
-        public const int  SecurityImpersonation = 2;
-        public const int  TokenPrimary = 1;
-        public const int  TokenLinkedToken = 19;
-        public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
-        public const uint WAIT_TIMEOUT  = 0x00000102;
-        public const uint WAIT_OBJECT_0 = 0x00000000;
-
-        /// <summary>
-        /// Launch a command line on the active console user's desktop.
-        /// Returns process handle + PID, or IntPtr.Zero if no user session.
-        /// </summary>
-        public static IntPtr Launch(string cmdLine, out uint pid)
-        {
-            pid = 0;
-            uint sid = WTSGetActiveConsoleSessionId();
-            if (sid == 0xFFFFFFFF) return IntPtr.Zero;   // no session
-
-            IntPtr userToken;
-            if (!WTSQueryUserToken(sid, out userToken))
-                return IntPtr.Zero;
-
-            // Try to get the linked elevated token (UAC).
-            IntPtr elevated = IntPtr.Zero;
-            IntPtr linkedRaw;
-            int    retLen;
-            if (GetTokenInformation(userToken, TokenLinkedToken,
-                    out linkedRaw, IntPtr.Size, out retLen))
-            {
-                // linkedRaw IS the elevated token handle
-                elevated = linkedRaw;
-            }
-
-            // If we got an elevated token, duplicate it as a primary token.
-            // Otherwise fall back to the original user token.
-            IntPtr launchToken;
-            if (elevated != IntPtr.Zero)
-            {
-                if (!DuplicateTokenEx(elevated, TOKEN_ALL, IntPtr.Zero,
-                        SecurityImpersonation, TokenPrimary, out launchToken))
-                {
-                    launchToken = userToken;  // fallback
-                }
-                CloseHandle(elevated);
-            }
-            else
-            {
-                DuplicateTokenEx(userToken, TOKEN_ALL, IntPtr.Zero,
-                    SecurityImpersonation, TokenPrimary, out launchToken);
-            }
-
-            // Build environment block for the user
-            IntPtr env;
-            CreateEnvironmentBlock(out env, launchToken, false);
-
-            var si = new STARTUPINFO();
-            si.cb        = Marshal.SizeOf(si);
-            si.lpDesktop = "winsta0\\default";
-
-            PROCESS_INFORMATION pi;
-            bool ok = CreateProcessAsUserW(
-                launchToken, null, cmdLine,
-                IntPtr.Zero, IntPtr.Zero, false,
-                CREATE_UNICODE_ENVIRONMENT, env, null,
-                ref si, out pi);
-
-            // Cleanup
-            if (env != IntPtr.Zero) DestroyEnvironmentBlock(env);
-            CloseHandle(launchToken);
-            CloseHandle(userToken);
-
-            if (!ok) return IntPtr.Zero;
-
-            pid = pi.dwProcessId;
-            CloseHandle(pi.hThread);
-            return pi.hProcess;   // caller must close after waiting
-        }
-    }
-}
-'@
-}
-
-function Start-ProcessInUserSession {
-    <#
-    Launches a command in the logged-in user's desktop session (visible GUI).
-    Returns $true if the process ran and exited within the timeout.
-    When no interactive user is logged in, returns $null (caller should fall back).
-    #>
-    param(
-        [string]$CommandLine,
-        [int]$TimeoutMs = 1200000   # 20 minutes
-    )
-
-    $pid2 = [uint32]0
-    $hProc = [WinDeploy.SessionLauncher]::Launch($CommandLine, [ref]$pid2)
-
-    if ($hProc -eq [IntPtr]::Zero) {
-        Write-LogWarning 'No interactive user session found - cannot launch GUI process.'
-        return $null
-    }
-
-    Write-LogInfo "Launched PID $pid2 in user session."
-
-    $waitResult = [WinDeploy.SessionLauncher]::WaitForSingleObject($hProc, [uint32]$TimeoutMs)
-    if ($waitResult -eq [WinDeploy.SessionLauncher]::WAIT_TIMEOUT) {
-        Write-LogWarning "Process $pid2 exceeded timeout - killing."
-        try { Stop-Process -Id $pid2 -Force -ErrorAction SilentlyContinue } catch {}
-        [WinDeploy.SessionLauncher]::CloseHandle($hProc) | Out-Null
-        return $false
-    }
-
-    $exitCode = [uint32]0
-    [WinDeploy.SessionLauncher]::GetExitCodeProcess($hProc, [ref]$exitCode) | Out-Null
-    [WinDeploy.SessionLauncher]::CloseHandle($hProc) | Out-Null
-    Write-LogInfo "Process exited with code $exitCode."
-    return $true
-}
+# WinUtil's `-Noui` + `-Run` mode is fundamentally broken for unattended use:
+#   - Invoke-WinUtilAutoRun does work inside a background runspace and uses
+#     BusyWait() to poll $sync.ProcessRunning; that flag is set true at the
+#     top of the runspace but only set false at the end. If anything in the
+#     middle fails (e.g. the runspace references $sync["Form"].Dispatcher,
+#     which is null in -Noui mode), the flag stays true and the parent
+#     loops forever -- a 12-minute timeout, then the headless fallback also
+#     hangs for the same reason. This was observed on 2026-04-10 on this
+#     repo's first real-machine run.
+#
+# Instead of running WinUtil's own runner, we parse the WinUtil bundle's
+# embedded JSON ($sync.configs.tweaks and $sync.configs.feature heredocs)
+# and apply each preset ID directly: registry entries, services,
+# Windows-optional-features, and InvokeScript blocks. Runs synchronously
+# in our SYSTEM context -- no GUI, no runspace, no dispatcher.
 
 # ---------------------------------------------------------------------------
 # Script-level state for user hive management
@@ -354,243 +169,297 @@ function Get-AllUserRoots {
 }
 
 # ---------------------------------------------------------------------------
-# Pass 1: WinUtil unattended preset
+# Pass 1: WinUtil preset (direct apply)
 # ---------------------------------------------------------------------------
-# The two launch paths (user-session GUI vs. SYSTEM headless) share a single
-# child-script body produced by Get-WinUtilChildScriptBody. The child:
-#   1. Starts a transcript at $ChildLog so its output reaches windeploy.log.
-#   2. Downloads the WinUtil bundle.
-#   3. Catalogs the WPF{Install|Tweaks|Feature|Toggle} IDs the bundle declares,
-#      compares them with the preset, and records unknown IDs to $ChildMeta.
-#   4. In GUI mode: regex-patches Invoke-WinUtilAutoRun to auto-close the
-#      form. If the patch matches 0 sites, falls back to -Noui inline.
-#      In headless mode: runs -Noui directly.
-#   5. Writes a structured outcome to $ChildMeta.
-# The parent reads $ChildMeta + $ChildLog after the child exits and surfaces
-# outcome into windeploy.log and StageExtras so a silent "did nothing" run is
-# no longer invisible.
+# We download the WinUtil bundle, extract the embedded $sync.configs.tweaks
+# and $sync.configs.feature JSON heredocs, and apply each preset ID's
+# registry / service / feature / InvokeScript entries ourselves.
+#
+# Bundle URL: christitus.com/win redirects to GitHub's latest release. We
+# fetch the GitHub URL directly to avoid the redirect (faster, no Cloudflare
+# in the path) but fall back to the short URL if the GitHub URL is down.
 
-function Get-WinUtilChildScriptBody {
-    param(
-        [Parameter(Mandatory)][string]$PresetPath,
-        [Parameter(Mandatory)][string]$ChildLog,
-        [Parameter(Mandatory)][string]$ChildMeta,
-        [Parameter(Mandatory)][ValidateSet('GUI-AutoClose','Headless')][string]$Mode
-    )
+$Script:WinUtilBundleUrls = @(
+    'https://github.com/ChrisTitusTech/winutil/releases/latest/download/winutil.ps1'
+    'https://christitus.com/win'
+)
 
-    $escapedPreset = $PresetPath -replace "'","''"
-    $escapedLog    = $ChildLog   -replace "'","''"
-    $escapedMeta   = $ChildMeta  -replace "'","''"
-    $wantHeadless  = if ($Mode -eq 'Headless') { '$true' } else { '$false' }
+function Get-WinUtilBundle {
+    <#
+    Downloads the WinUtil bundle, returns its source text. Tries each URL
+    in order until one succeeds; throws if all fail.
+    #>
+    param([int]$TimeoutSec = 60)
 
-    return @"
-`$ErrorActionPreference = 'Continue'
-
-# Prefer Tls12+Tls13. The string-flag parse + SChannel assignment can fail on
-# older Windows builds where Tls13 is not negotiable - fall back to Tls12.
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
-} catch {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-}
-
-`$childLog     = '$escapedLog'
-`$childMeta    = '$escapedMeta'
-`$presetPath   = '$escapedPreset'
-`$wantHeadless = $wantHeadless
-
-try { Start-Transcript -Path `$childLog -Force -IncludeInvocationHeader | Out-Null } catch {}
-
-`$meta = [ordered]@{
-    LaunchMode         = if (`$wantHeadless) { 'headless-noui' } else { 'gui-autoclose' }
-    BundleBytes        = 0
-    BundleIdCount      = 0
-    PresetIds          = @()
-    KnownIds           = @()
-    UnknownIds         = @()
-    AutoClosePatchHits = 0
-    ExitReason         = 'unknown'
-}
-
-try {
-    Write-Host '[WinDeploy] Downloading WinUtil bootstrap script...'
-    `$winutilSrc = Invoke-RestMethod 'https://christitus.com/win'
-    `$meta.BundleBytes = `$winutilSrc.Length
-    Write-Host ("[WinDeploy] Bundle size: {0} bytes." -f `$meta.BundleBytes)
-
-    # Catalog every WPF{Install|Tweaks|Feature|Toggle} key the bundle declares.
-    # These appear as JSON-style keys inside the bundle's inlined config blobs.
-    `$bundleIdRegex = '"(WPF(?:Install|Tweaks|Feature[s]?|Toggle)\w+)"\s*:'
-    `$bundleIds = @{}
-    foreach (`$m in [regex]::Matches(`$winutilSrc, `$bundleIdRegex)) {
-        `$bundleIds[`$m.Groups[1].Value] = `$true
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
+    } catch {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     }
-    `$meta.BundleIdCount = `$bundleIds.Count
-    Write-Host ("[WinDeploy] Bundle declares {0} IDs." -f `$bundleIds.Count)
 
-    # Parse preset - accept flat-array or nested {WPFTweaks,WPFInstall,WPFFeature}.
-    # ReadAllText (no encoding arg) auto-detects BOM, so a fresh WinUtil export
-    # saved as UTF-16 LE survives without manual conversion.
-    `$presetRaw = [System.IO.File]::ReadAllText(`$presetPath)
-    `$presetObj = `$presetRaw | ConvertFrom-Json
-    `$presetIds = @()
-    if (`$presetObj -is [array]) {
-        `$presetIds = @(`$presetObj)
-    } else {
-        foreach (`$prop in 'WPFTweaks','WPFInstall','WPFFeature') {
-            if (`$presetObj.PSObject.Properties.Name -contains `$prop) {
-                `$presetIds += @(`$presetObj.`$prop)
+    $lastErr = $null
+    foreach ($url in $Script:WinUtilBundleUrls) {
+        try {
+            Write-LogInfo "  Downloading WinUtil bundle from $url"
+            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec $TimeoutSec -ErrorAction Stop
+            # GitHub serves .ps1 with application/octet-stream so Content
+            # arrives as byte[]; christitus.com returns text/plain so it
+            # arrives as string. Normalize to UTF-8 string.
+            $text = if ($resp.Content -is [byte[]]) {
+                [System.Text.Encoding]::UTF8.GetString($resp.Content)
+            } else {
+                [string]$resp.Content
             }
+            if ([string]::IsNullOrWhiteSpace($text) -or $text.Length -lt 100000) {
+                throw "Bundle suspiciously small ($($text.Length) bytes)"
+            }
+            Write-LogInfo "  Bundle: $($text.Length) bytes."
+            return $text
+        } catch {
+            $lastErr = $_.Exception.Message
+            Write-LogWarning "  $url failed: $lastErr"
         }
     }
-    `$meta.PresetIds  = `$presetIds
-    `$meta.KnownIds   = @(`$presetIds | Where-Object { `$bundleIds.ContainsKey(`$_) })
-    `$meta.UnknownIds = @(`$presetIds | Where-Object { -not `$bundleIds.ContainsKey(`$_) })
-    Write-Host ("[WinDeploy] Preset: {0} total, {1} known, {2} unknown." -f `
-        `$meta.PresetIds.Count, `$meta.KnownIds.Count, `$meta.UnknownIds.Count)
-    if (`$meta.UnknownIds.Count -gt 0) {
-        Write-Host ("[WinDeploy] WARNING: unknown IDs (silently dropped by WinUtil): " + (`$meta.UnknownIds -join ', '))
-    }
-
-    if (`$wantHeadless) {
-        Write-Host '[WinDeploy] Running WinUtil headless (-Noui)...'
-        & ([scriptblock]::Create(`$winutilSrc)) -Config `$presetPath -Run -Noui
-        `$meta.ExitReason = ("headless-exit-{0}" -f `$LASTEXITCODE)
-    } else {
-        # After Invoke-WinUtilAutoRun returns, close the form on its dispatcher
-        # thread so ShowDialog() returns and powershell.exe exits cleanly.
-        # Without this, the WPF window stays open and only the orchestrator's
-        # timeout would unblock the stage - which it would mark SUCCESS with
-        # nothing actually applied.
-        `$replacement = 'Invoke-WinUtilAutoRun; Start-Sleep -Seconds 3; try { `$sync["Form"].Dispatcher.Invoke([action]{ `$sync["Form"].Close() }) } catch {}'
-        `$pattern     = '(?<!function )Invoke-WinUtilAutoRun(?!\w)'
-        `$patched     = [regex]::Replace(`$winutilSrc, `$pattern, `$replacement)
-        `$meta.AutoClosePatchHits = ([regex]::Matches(`$winutilSrc, `$pattern)).Count
-        Write-Host ("[WinDeploy] Auto-close patch applied to {0} call site(s)." -f `$meta.AutoClosePatchHits)
-
-        if (`$meta.AutoClosePatchHits -lt 1) {
-            Write-Host '[WinDeploy] Patch matched 0 sites - falling back to headless (-Noui) inline.'
-            `$meta.LaunchMode = 'gui-patch-miss-headless-fallback'
-            & ([scriptblock]::Create(`$winutilSrc)) -Config `$presetPath -Run -Noui
-            `$meta.ExitReason = ("headless-inline-exit-{0}" -f `$LASTEXITCODE)
-        } else {
-            Write-Host '[WinDeploy] Launching WinUtil with patched bundle...'
-            & ([scriptblock]::Create(`$patched)) -Config `$presetPath -Run
-            `$meta.ExitReason = ("gui-exit-{0}" -f `$LASTEXITCODE)
-        }
-    }
-    Write-Host '[WinDeploy] WinUtil child exiting.'
-} catch {
-    `$meta.ExitReason = ("exception: {0}" -f `$_.Exception.Message)
-    Write-Host ("[WinDeploy] ERROR: {0}" -f `$_.Exception.Message)
-} finally {
-    try {
-        `$meta | ConvertTo-Json -Depth 5 | Set-Content -Path `$childMeta -Encoding UTF8 -Force
-    } catch {
-        Write-Host ("[WinDeploy] WARN: could not write meta to {0}: {1}" -f `$childMeta, `$_.Exception.Message)
-    }
-    try { Stop-Transcript | Out-Null } catch {}
-}
-"@
+    throw "All WinUtil bundle URLs failed. Last error: $lastErr"
 }
 
-function Invoke-WinUtilHeadlessFallback {
+function Get-WinUtilConfigsFromBundle {
     <#
-    Headless fallback: run WinUtil with -Noui in this (SYSTEM) session.
-    Used when no interactive user is logged in OR when the GUI launcher
-    failed / timed out. Writes to the same ChildLog/ChildMeta as the GUI
-    path so the parent reads a single, authoritative outcome record.
+    Extracts the embedded $sync.configs.<name> = @'<json>'@ heredocs and
+    returns a hashtable of { tweaks = <PSObject>; feature = <PSObject> }.
+    #>
+    param([Parameter(Mandatory)][string]$BundleSrc)
+
+    $result = @{}
+    foreach ($name in 'tweaks','feature') {
+        # Match $sync.configs.<name> = @'<newline>...<newline>'@ across lines.
+        # The bundle uses CRLF; ConvertFrom-Json handles either.
+        $pattern = ('\$sync\.configs\.' + [regex]::Escape($name) + "\s*=\s*@'\r?\n([\s\S]*?)\r?\n'@")
+        $m = [regex]::Match($BundleSrc, $pattern)
+        if (-not $m.Success) {
+            throw "Could not locate `$sync.configs.$name in WinUtil bundle (regex mismatch)."
+        }
+        try {
+            $obj = $m.Groups[1].Value | ConvertFrom-Json
+        } catch {
+            throw "Failed to parse `$sync.configs.$name JSON from bundle: $($_.Exception.Message)"
+        }
+        $result[$name] = $obj
+        $count = @($obj.PSObject.Properties).Count
+        Write-LogInfo "  Bundle.${name}: $count entries."
+    }
+    return $result
+}
+
+function Set-WinUtilRegistryEntry {
+    <#
+    Applies one WinUtil-style registry entry. Rewrites HKCU: to every
+    mounted user hive root so SYSTEM context still reaches the real user(s).
+    HKLM:, HKU:, and absolute Registry:: paths are written as-is.
     #>
     param(
-        [Parameter(Mandatory)][string]$PresetPath,
-        [Parameter(Mandatory)][string]$ChildLog,
-        [Parameter(Mandatory)][string]$ChildMeta,
-        [Parameter(Mandatory)][int]$TimeoutMs
+        [Parameter(Mandatory)][PSObject]$Entry,
+        [string]$TweakId = ''
     )
 
-    $tempScript = Join-Path $env:TEMP "windeploy_winutil_noui_$([guid]::NewGuid().ToString('N')).ps1"
-    try {
-        $body = Get-WinUtilChildScriptBody -PresetPath $PresetPath -ChildLog $ChildLog `
-                                            -ChildMeta $ChildMeta -Mode 'Headless'
-        [System.IO.File]::WriteAllText($tempScript, $body, [System.Text.Encoding]::UTF8)
+    $path  = [string]$Entry.Path
+    $rName = [string]$Entry.Name
+    $rVal  = $Entry.Value
+    $rType = if ($Entry.PSObject.Properties.Name -contains 'Type' -and $Entry.Type) { [string]$Entry.Type } else { 'DWord' }
 
-        $proc = Start-Process powershell.exe `
-            -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$tempScript`"" `
-            -WindowStyle Hidden `
-            -PassThru `
-            -ErrorAction Stop
-
-        $finished = $proc.WaitForExit($TimeoutMs)
-        if (-not $finished) {
-            Write-LogWarning "WinUtil (headless) exceeded $([int]($TimeoutMs/60000))-minute timeout - killing PID $($proc.Id)."
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-        } else {
-            Write-LogInfo "WinUtil (headless) exited with code: $($proc.ExitCode)"
-        }
-    } finally {
-        Remove-Item $tempScript -ErrorAction SilentlyContinue
-    }
-}
-
-function Read-WinUtilChildOutcome {
-    <#
-    Ingests the child transcript into windeploy.log and the child meta into
-    StageExtras. Always runs after both GUI and headless paths so the
-    orchestrator never silently swallows a WinUtil failure.
-    #>
-    param(
-        [Parameter(Mandatory)][string]$ChildLog,
-        [Parameter(Mandatory)][string]$ChildMeta,
-        [Parameter(Mandatory)][string]$StageName
-    )
-
-    if (Test-Path $ChildLog) {
-        Write-LogInfo '--- WinUtil child transcript begin ---'
-        Get-Content -Path $ChildLog -Encoding UTF8 -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-LogInfo "  $_" }
-        Write-LogInfo '--- WinUtil child transcript end ---'
-    } else {
-        Write-LogWarning "WinUtil child transcript not found at $ChildLog"
-    }
-
-    if (-not (Test-Path $ChildMeta)) {
-        Write-LogWarning "WinUtil child meta not found at $ChildMeta - cannot summarize outcome."
-        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value 'no-meta-file' } catch {}
+    # WinUtil presets sometimes use '<RemoveEntry>' as Value to indicate the
+    # entry should be deleted. We treat that as "no-op" in apply mode since
+    # the entry already not existing == the desired state.
+    if ($rVal -is [string] -and $rVal -eq '<RemoveEntry>') {
+        Write-LogInfo "  [$TweakId] skip $path\$rName (Value = <RemoveEntry>)"
         return
     }
 
-    $meta = $null
+    # Coerce DWord/QWord values: bundle stores them as strings.
+    if ($rType -eq 'DWord' -or $rType -eq 'QWord') {
+        try { $rVal = [int64]$rVal } catch { }
+    }
+
+    if ($path -match '^HKCU:(?<rest>.*)$') {
+        $rest = $Matches['rest']
+        foreach ($root in (Get-AllUserRoots)) {
+            Set-Reg ($root + $rest) $rName $rVal $rType
+        }
+    } else {
+        # HKU: paths require a PSDrive (Set-ItemProperty's provider lookup
+        # for HKU is not registered by default on PS 5.1).
+        if ($path -match '^HKU:' -and -not (Get-PSDrive -Name 'HKU' -ErrorAction SilentlyContinue)) {
+            try { New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS -Scope Script -ErrorAction Stop | Out-Null } catch {}
+        }
+        Set-Reg $path $rName $rVal $rType
+    }
+}
+
+function Set-WinUtilServiceEntry {
+    <#
+    Sets a Windows service startup type. Handles two quirks in WinUtil's
+    own data: (1) some entries use 'Disable' (typo) instead of 'Disabled',
+    and (2) 'AutomaticDelayedStart' is not a valid -StartupType for
+    Set-Service on PS 5.1 -- has to go through sc.exe. Skips silently if
+    the service doesn't exist on this SKU.
+    #>
+    param(
+        [Parameter(Mandatory)][PSObject]$Entry,
+        [string]$TweakId = ''
+    )
+    $sName = [string]$Entry.Name
+    $sType = [string]$Entry.StartupType
+    if (-not $sType) { return }
+
+    # Normalize WinUtil's quirks
+    if ($sType -eq 'Disable') { $sType = 'Disabled' }
+
     try {
-        $meta = Get-Content -Raw -Path $ChildMeta -Encoding UTF8 | ConvertFrom-Json
+        $svc = Get-Service -Name $sName -ErrorAction Stop
+        if ($sType -eq 'AutomaticDelayedStart') {
+            & sc.exe config $sName start= delayed-auto | Out-Null
+            Write-LogInfo "  [$TweakId] service $sName -> delayed-auto (sc.exe)"
+            return
+        }
+        if ($svc.StartType.ToString() -eq $sType) {
+            Write-LogInfo "  [$TweakId] service $sName already $sType"
+            return
+        }
+        Set-Service -Name $sName -StartupType $sType -ErrorAction Stop
+        Write-LogInfo "  [$TweakId] service $sName -> $sType"
+    } catch [Microsoft.PowerShell.Commands.ServiceCommandException] {
+        Write-LogInfo "  [$TweakId] service $sName not present on this SKU; skipping."
     } catch {
-        Write-LogWarning "WinUtil meta parse failed: $($_.Exception.Message)"
-        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value 'meta-parse-failed' } catch {}
-        return
+        Write-LogWarning "  [$TweakId] service ${sName}: $($_.Exception.Message)"
     }
+}
 
-    $presetCount  = @($meta.PresetIds).Count
-    $knownCount   = @($meta.KnownIds).Count
-    $unknownCount = @($meta.UnknownIds).Count
-    $unknownList  = @($meta.UnknownIds)
-
-    Write-LogInfo ("WinUtil outcome: mode={0}, autoClosePatchHits={1}, presetIds={2} ({3} known, {4} unknown), exit={5}" -f `
-        $meta.LaunchMode, $meta.AutoClosePatchHits, $presetCount, $knownCount, $unknownCount, $meta.ExitReason)
-
-    if ($unknownCount -gt 0) {
-        Write-LogWarning ("Unknown preset IDs (silently dropped by WinUtil): " + ($unknownList -join ', '))
-    }
-
+function Enable-WinUtilWindowsFeature {
+    <#
+    Enables a Windows optional feature. -NoRestart prevents the cmdlet from
+    rebooting -- WindowsUpdate runs after WinTweaks and the orchestrator
+    triggers reboots itself.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$FeatureName,
+        [string]$TweakId = ''
+    )
     try {
-        Set-StageExtra -StageName $StageName -Key 'WinUtilLaunchMode'         -Value $meta.LaunchMode
-        Set-StageExtra -StageName $StageName -Key 'WinUtilAutoClosePatchHits' -Value $meta.AutoClosePatchHits
-        Set-StageExtra -StageName $StageName -Key 'WinUtilPresetIdCount'     -Value $presetCount
-        Set-StageExtra -StageName $StageName -Key 'WinUtilKnownIdCount'      -Value $knownCount
-        Set-StageExtra -StageName $StageName -Key 'WinUtilUnknownPresetIds'  -Value $unknownList
-        Set-StageExtra -StageName $StageName -Key 'WinUtilExitReason'        -Value $meta.ExitReason
-        Set-StageExtra -StageName $StageName -Key 'WinUtilBundleIdCount'     -Value $meta.BundleIdCount
+        $state = Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction Stop
+        if ($state.State -eq 'Enabled') {
+            Write-LogInfo "  [$TweakId] feature $FeatureName already enabled."
+            return
+        }
+        Enable-WindowsOptionalFeature -Online -FeatureName $FeatureName -NoRestart -All -ErrorAction Stop | Out-Null
+        Write-LogInfo "  [$TweakId] feature $FeatureName enabled."
     } catch {
-        Write-LogWarning "Could not write WinUtil StageExtras: $($_.Exception.Message)"
+        Write-LogWarning "  [$TweakId] feature ${FeatureName}: $($_.Exception.Message)"
     }
+}
+
+function Invoke-WinUtilScriptEntry {
+    <#
+    Executes a WinUtil InvokeScript string. Captures all output streams into
+    the log; never re-throws so one bad script can't sink the whole pass.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ScriptText,
+        [string]$TweakId = ''
+    )
+    if ([string]::IsNullOrWhiteSpace($ScriptText)) { return }
+    Write-LogInfo "  [$TweakId] InvokeScript ($($ScriptText.Length) chars):"
+    try {
+        $sb = [scriptblock]::Create($ScriptText)
+        $output = & $sb 2>&1
+        foreach ($line in $output) {
+            $s = if ($null -eq $line) { '' } else { $line.ToString() }
+            if ([string]::IsNullOrWhiteSpace($s)) { continue }
+            Write-LogInfo "    > $s"
+        }
+    } catch {
+        Write-LogWarning "  [$TweakId] InvokeScript threw: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-WinUtilPresetEntry {
+    <#
+    Applies a single preset ID. Looks it up in tweaks first, then features.
+    WPFInstall* IDs are deliberately skipped -- this repo owns app installs
+    via data/profiles.json so we don't want WinUtil's installer fighting it.
+    Returns a status string for the per-ID report.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)][PSObject]$TweaksConfig,
+        [Parameter(Mandatory)][PSObject]$FeatureConfig
+    )
+
+    if ($Id -like 'WPFInstall*') {
+        Write-LogInfo "  $Id -> skipped (installs are owned by profiles.json)"
+        return 'skipped-install'
+    }
+
+    $entry = $null
+    $bucket = $null
+    if ($TweaksConfig.PSObject.Properties.Name -contains $Id) {
+        $entry = $TweaksConfig.$Id; $bucket = 'tweak'
+    } elseif ($FeatureConfig.PSObject.Properties.Name -contains $Id) {
+        $entry = $FeatureConfig.$Id; $bucket = 'feature'
+    } else {
+        Write-LogWarning "  $Id -> not found in WinUtil bundle (renamed upstream?)"
+        return 'unknown'
+    }
+
+    Write-LogInfo "  $Id ($bucket): applying"
+
+    $propNames = @($entry.PSObject.Properties.Name)
+
+    if ($propNames -contains 'registry' -and $entry.registry) {
+        foreach ($r in @($entry.registry)) {
+            Set-WinUtilRegistryEntry -Entry $r -TweakId $Id
+        }
+    }
+    if ($propNames -contains 'service' -and $entry.service) {
+        foreach ($s in @($entry.service)) {
+            Set-WinUtilServiceEntry -Entry $s -TweakId $Id
+        }
+    }
+    if ($propNames -contains 'feature' -and $entry.feature) {
+        foreach ($f in @($entry.feature)) {
+            Enable-WinUtilWindowsFeature -FeatureName $f -TweakId $Id
+        }
+    }
+    if ($propNames -contains 'InvokeScript' -and $entry.InvokeScript) {
+        foreach ($scr in @($entry.InvokeScript)) {
+            Invoke-WinUtilScriptEntry -ScriptText $scr -TweakId $Id
+        }
+    }
+    return 'applied'
+}
+
+function Get-WinUtilPresetIds {
+    <#
+    Parses config/winutil-preset.json. Supports two shapes:
+      1. Flat array of IDs (WinDeploy's preferred format)
+      2. Nested object { WPFTweaks: [...], WPFInstall: [...], WPFFeature: [...] }
+         (WinUtil's GUI exporter writes this)
+    ReadAllText (no encoding arg) auto-detects BOM so a fresh export saved
+    as UTF-16 LE survives.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    $raw = [System.IO.File]::ReadAllText($Path)
+    $obj = $raw | ConvertFrom-Json
+
+    if ($obj -is [array]) { return @($obj) }
+
+    $ids = @()
+    foreach ($prop in 'WPFTweaks','WPFToggle','WPFInstall','WPFFeature') {
+        if ($obj.PSObject.Properties.Name -contains $prop) {
+            $ids += @($obj.$prop)
+        }
+    }
+    return $ids
 }
 
 function Start-WinUtilPreset {
@@ -602,47 +471,60 @@ function Start-WinUtilPreset {
         return
     }
 
-    $timeoutMs = $WD.WinUtilTimeoutMs
-    $id        = [guid]::NewGuid().ToString('N')
-
-    # LogDir is owned by SYSTEM but inherits ProgramData permissions so the
-    # user-session child can write here too.
-    if (-not (Test-Path $WD.LogDir)) {
-        New-Item -ItemType Directory -Path $WD.LogDir -Force | Out-Null
-    }
-    $childLog  = Join-Path $WD.LogDir "winutil-child-$id.log"
-    $childMeta = Join-Path $WD.LogDir "winutil-child-$id.meta.json"
-
-    $tempScript = Join-Path $env:TEMP "windeploy_winutil_$id.ps1"
+    $presetIds = @()
     try {
-        $body = Get-WinUtilChildScriptBody -PresetPath $presetPath -ChildLog $childLog `
-                                            -ChildMeta $childMeta -Mode 'GUI-AutoClose'
-        [System.IO.File]::WriteAllText($tempScript, $body, [System.Text.Encoding]::UTF8)
-        Write-LogInfo "WinUtil launcher script: $tempScript"
-        Write-LogInfo "WinUtil child log:       $childLog"
-        Write-LogInfo "WinUtil child meta:      $childMeta"
-
-        $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$tempScript`""
-
-        Write-LogInfo 'Attempting to launch WinUtil in user desktop session (GUI + console)...'
-        $result = Start-ProcessInUserSession -CommandLine $cmdLine -TimeoutMs $timeoutMs
-
-        if ($null -eq $result) {
-            Write-LogInfo 'No user session - falling back to headless (-Noui) mode.'
-            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -ChildLog $childLog `
-                                            -ChildMeta $childMeta -TimeoutMs $timeoutMs
-        } elseif ($result -eq $false) {
-            Write-LogWarning 'GUI launcher timed out -- retrying once with headless (-Noui) mode.'
-            Invoke-WinUtilHeadlessFallback -PresetPath $presetPath -ChildLog $childLog `
-                                            -ChildMeta $childMeta -TimeoutMs $timeoutMs
-        }
+        $presetIds = @(Get-WinUtilPresetIds -Path $presetPath)
     } catch {
-        Write-LogWarning "WinUtil run failed: $($_.Exception.Message)"
-        Write-LogWarning 'Continuing with direct registry tweaks.'
-        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value "exception: $($_.Exception.Message)" } catch {}
-    } finally {
-        Remove-Item $tempScript -ErrorAction SilentlyContinue
-        Read-WinUtilChildOutcome -ChildLog $childLog -ChildMeta $childMeta -StageName $StageName
+        Write-LogWarning "WinUtil preset parse failed: $($_.Exception.Message)"
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value "preset-parse-failed: $($_.Exception.Message)" } catch {}
+        return
+    }
+    Write-LogInfo "WinUtil preset: $($presetIds.Count) IDs"
+
+    $bundleSrc = $null
+    try {
+        $bundleSrc = Get-WinUtilBundle
+    } catch {
+        Write-LogWarning "WinUtil bundle download failed: $($_.Exception.Message)"
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value "bundle-download-failed: $($_.Exception.Message)" } catch {}
+        return
+    }
+
+    $configs = $null
+    try {
+        $configs = Get-WinUtilConfigsFromBundle -BundleSrc $bundleSrc
+    } catch {
+        Write-LogWarning "WinUtil bundle parse failed: $($_.Exception.Message)"
+        try { Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome' -Value "bundle-parse-failed: $($_.Exception.Message)" } catch {}
+        return
+    }
+
+    $applied = 0; $skipped = 0; $unknown = @()
+    foreach ($id in $presetIds) {
+        $status = $null
+        try {
+            $status = Invoke-WinUtilPresetEntry -Id $id -TweaksConfig $configs['tweaks'] -FeatureConfig $configs['feature']
+        } catch {
+            Write-LogWarning "  $id threw: $($_.Exception.Message)"
+            $status = 'error'
+        }
+        switch ($status) {
+            'applied'           { $applied++ }
+            'skipped-install'   { $skipped++ }
+            'unknown'           { $unknown += $id }
+            default             { }
+        }
+    }
+
+    Write-LogSuccess "WinUtil direct apply: $applied applied, $skipped skipped, $($unknown.Count) unknown."
+    try {
+        Set-StageExtra -StageName $StageName -Key 'WinUtilOutcome'         -Value 'direct-apply'
+        Set-StageExtra -StageName $StageName -Key 'WinUtilPresetIdCount'   -Value $presetIds.Count
+        Set-StageExtra -StageName $StageName -Key 'WinUtilAppliedCount'    -Value $applied
+        Set-StageExtra -StageName $StageName -Key 'WinUtilSkippedCount'    -Value $skipped
+        Set-StageExtra -StageName $StageName -Key 'WinUtilUnknownPresetIds' -Value $unknown
+    } catch {
+        Write-LogWarning "Could not write WinUtil StageExtras: $($_.Exception.Message)"
     }
 }
 
@@ -818,22 +700,23 @@ function Set-AdditionalTweaks {
 try {
     Write-LogInfo "Stage '$StageName' starting."
 
-    # Pass 1: WinUtil (best-effort)
     $runWinUtil = if ($Config['WinTweaks'] -and $Config['WinTweaks']['RunWinUtil'] -eq $false) {
         $false
     } else { $true }
 
-    if ($runWinUtil) {
-        Write-LogSection 'Pass 1: WinUtil preset'
-        try { Start-WinUtilPreset } catch { Write-LogWarning "WinUtil pass threw: $($_.Exception.Message)" }
-    } else {
-        Write-LogInfo 'WinUtil pass skipped (RunWinUtil = false in config).'
-    }
-
-    # Pass 2: Direct tweaks -- mount all user hives first
-    Write-LogSection 'Pass 2: Direct registry tweaks'
+    # Mount user hives once for both passes. Pass 1 (WinUtil direct apply)
+    # needs them so HKCU: paths can be rewritten to each user. Pass 2
+    # touches the same hives directly.
     Mount-AllUserHives
     try {
+        if ($runWinUtil) {
+            Write-LogSection 'Pass 1: WinUtil preset (direct apply)'
+            try { Start-WinUtilPreset } catch { Write-LogWarning "WinUtil pass threw: $($_.Exception.Message)" }
+        } else {
+            Write-LogInfo 'WinUtil pass skipped (RunWinUtil = false in config).'
+        }
+
+        Write-LogSection 'Pass 2: Direct registry tweaks'
         Set-DarkTheme
         Remove-BingSearch
         Set-NumLockOn

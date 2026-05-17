@@ -83,14 +83,6 @@ $Script:REBOOT_ALLOWED_STAGES = @('TimeSync', 'WindowsUpdate', 'InstallTailscale
 $Script:DRAIN_STAGES = @('TimeSync', 'WindowsUpdate')
 
 # ---------------------------------------------------------------------------
-# Stage-specific tunables
-# ---------------------------------------------------------------------------
-# Maximum time WinUtil (Pass 1 of WinTweaks) is allowed to run before the
-# orchestrator force-kills it and falls back to direct registry tweaks.
-# Standard preset typically completes in 3-5 minutes.
-$Script:WINUTIL_TIMEOUT_MS = 12 * 60 * 1000
-
-# ---------------------------------------------------------------------------
 # Config object — built once at module load time, returned by Get-WDConfig.
 # Using a function export instead of Export-ModuleMember -Variable because
 # PS 5.1 + StrictMode does not reliably resolve module-exported variables
@@ -112,7 +104,6 @@ $Script:_config = [PSCustomObject]@{
     StageLabels         = $Script:STAGE_LABELS
     RebootAllowedStages = $Script:REBOOT_ALLOWED_STAGES
     DrainStages         = $Script:DRAIN_STAGES
-    WinUtilTimeoutMs    = $Script:WINUTIL_TIMEOUT_MS
 }
 
 function Get-WDConfig {
