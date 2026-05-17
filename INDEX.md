@@ -7,8 +7,8 @@
 | Metric | Value |
 |---|---|
 | Files | 47 |
-| PowerShell | 30 files, 9,631 lines |
-| Total size | 451 KB |
+| PowerShell | 30 files, 9,710 lines |
+| Total size | 453 KB |
 
 ## Files
 
@@ -66,7 +66,7 @@
 | | | | |
 | `tools/Get-WingetManifestFields.ps1` | 59 | 2.1 KB | Downloads an installer and prints the fields needed for a WINGET_MANIFEST |
 | `tools/Test-WinUtilApplyOne.ps1` | 143 | 5.4 KB | Real-apply smoke test for the WinUtil direct-apply path. |
-| `tools/Test-WinUtilDirectApply.ps1` | 151 | 5.5 KB | Dry-run for the WinUtil direct-apply path in core/WinTweaks.ps1. |
+| `tools/Test-WinUtilDirectApply.ps1` | 230 | 8.4 KB | Dry-run (or full real-apply) for the WinUtil direct-apply path. |
 | `tools/Troubleshoot.ps1` | 740 | 32.9 KB | Status / Diagnose / Repair entry point - auto-fired by Orchestrator + Watchdog |
 | `tools/Update-Index.ps1` | 237 | 11.4 KB | Generates INDEX.md file inventory (this script) |
 
