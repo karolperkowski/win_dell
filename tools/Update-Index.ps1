@@ -116,10 +116,36 @@ function Get-Synopsis {
 }
 
 # ── Scan files ──────────────────────────────────────────────────────────────
-$files = Get-ChildItem -Path $RepoRoot -Recurse -File | Where-Object {
-    $rel = $_.FullName.Substring($RepoRoot.Length + 1)
-    -not (Test-Excluded $rel)
-} | Sort-Object { $_.DirectoryName }, { $_.Name }
+# Use `git ls-files` (tracked files only) when we're inside a git repo. This
+# matches exactly what CI sees on a fresh checkout. The filesystem fallback
+# is for when this script is run outside a working tree (e.g. shipped to a
+# tarball without .git). Without this, locally-untracked artifacts like
+# winutil.json (user-exported preset) or test-output logs get counted into
+# INDEX.md, CI regenerates without them, and the "Verify INDEX.md is up to
+# date" check fails on every push.
+$useGit = $false
+try {
+    $gitDir = Join-Path $RepoRoot '.git'
+    if (Test-Path $gitDir) {
+        $tracked = & git -C $RepoRoot ls-files 2>$null
+        if ($LASTEXITCODE -eq 0 -and $tracked) {
+            $useGit = $true
+            $files = foreach ($rel in $tracked) {
+                $full = Join-Path $RepoRoot ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+                if (Test-Path $full -PathType Leaf) {
+                    if (-not (Test-Excluded $rel)) { Get-Item -LiteralPath $full }
+                }
+            }
+            $files = $files | Sort-Object { $_.DirectoryName }, { $_.Name }
+        }
+    }
+} catch { }
+if (-not $useGit) {
+    $files = Get-ChildItem -Path $RepoRoot -Recurse -File | Where-Object {
+        $rel = $_.FullName.Substring($RepoRoot.Length + 1)
+        -not (Test-Excluded $rel)
+    } | Sort-Object { $_.DirectoryName }, { $_.Name }
+}
 
 $entries = @()
 $totalLines = 0
