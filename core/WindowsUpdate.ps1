@@ -6,10 +6,19 @@
 .DESCRIPTION
     Drives the native Windows Update Agent COM API (Microsoft.Update.Session
     + Microsoft.Update.ServiceManager) to detect, download, and install all
-    pending updates with the Microsoft Update service registered so Office,
-    .NET, MS-published drivers, and optional updates are in scope - these
-    are exactly what the Settings -> Windows Update UI shows but what the old
-    PSWindowsUpdate-only path missed.
+    pending updates. Two searches are issued and merged:
+
+      - Software updates via the Microsoft Update service (so Office, .NET,
+        and other MS-published software are in scope).
+      - Driver updates via the default Windows Update service. The Microsoft
+        Update service catalog rejects Type='Driver' criteria with
+        WU_E_INVALID_CRITERIA (0x80240032), so drivers must come from the
+        default WU service.
+
+    Either search will retry with progressively narrower criteria on
+    WU_E_INVALID_CRITERIA and record the criteria that finally worked into
+    StageExtras (WindowsUpdate_ComScanCriteriaUsed). Driver-search failure
+    is non-fatal - we log a warning and proceed with software-only.
 
     After the WUA drain reports zero pending, the stage invokes Dell Command
     | Update (DCU) for OEM BIOS / firmware / driver updates that don't flow
@@ -20,10 +29,6 @@
     WindowsUpdate as a DRAIN stage (Config.psm1 $Script:DRAIN_STAGES) - every
     subsequent boot re-runs this script so late-cascading updates (servicing
     stack -> cumulative -> .NET -> drivers) are caught.
-
-    PSWindowsUpdate fallback: if the COM session cannot be created (very
-    rare - usually corruption of wuaueng.dll), the script falls back to the
-    legacy PSWindowsUpdate-based install path with -MicrosoftUpdate flagged.
 
 .RETURNS
     Hashtable: @{ Status = 'Complete'|'RebootRequired'|'Failed'; Message = string }
@@ -71,7 +76,12 @@ if ($Config.ContainsKey('InstallDellCommandUpdateIfMissing')) {
 $Script:MS_UPDATE_SERVICE_ID = '7971f918-a847-4430-9279-4a52d1efe18d'
 $Script:WU_CYCLE_STATE_KEY   = 'WindowsUpdate_CycleCount'
 $Script:CHUNK_SIZE           = 50
-$Script:NUGET_MIN_VERSION    = [Version]'2.8.5.201'
+
+# ServerSelection enum (IUpdateSearcher.ServerSelection)
+$Script:SS_DEFAULT        = 0
+$Script:SS_MANAGED_SERVER = 1
+$Script:SS_WINDOWS_UPDATE = 2
+$Script:SS_OTHERS         = 3
 
 # Known WU HResult codes -> human-readable strings. Keys are strings (the
 # formatted hex) so we don't fight Int32 overflow on values with the high bit set.
@@ -80,6 +90,7 @@ $Script:WU_HRESULT_MEANINGS = @{
     '0x00000000' = 'Success'
     '0x00240001' = 'Reboot required (informational)'
     '0x80240020' = 'WU_E_NO_INTERACTIVE_USER - operation requires an interactive user.'
+    '0x80240032' = "WU_E_INVALID_CRITERIA - search criteria rejected by service (often Type='Driver' against Microsoft Update; query default WU instead)."
     '0x80240438' = 'WU_E_NO_CONNECTION - WU agent could not reach a source.'
     '0x8024D007' = 'WU_E_SETUP_WUSERVICE_NOT_STOPPED - wuauserv was not stopped before update.'
     '0x8024200B' = 'WU_E_INSTALL_FAILURE - install command failed; see WindowsUpdate.log.'
@@ -88,6 +99,7 @@ $Script:WU_HRESULT_MEANINGS = @{
     '0x8024401C' = 'WU_E_PT_HTTP_STATUS_REQ_TIMEOUT - source request timed out.'
     '0x8024A005' = 'WU_E_AU_NO_REGISTERED_SERVICE - no service is registered with AU.'
 }
+$Script:WU_E_INVALID_CRITERIA = '0x80240032'
 
 function Format-WUHResult {
     param([Parameter(Mandatory)][int]$HResult)
@@ -99,7 +111,8 @@ function Format-WUHResult {
 }
 
 # ---------------------------------------------------------------------------
-# Cycle counter - shared between COM path and PSWindowsUpdate fallback
+# Cycle counter - persisted across reboots so the drain stage knows when to
+# give up.
 # ---------------------------------------------------------------------------
 function Get-UpdateCycleCount {
     $state = Get-DeployState
@@ -185,59 +198,185 @@ function Register-MicrosoftUpdateService {
     }
 }
 
-function Get-WUSearchCriteria {
-    # https://learn.microsoft.com/windows/win32/wua_sdk/search-criteria
-    $typeBits = @("Type='Software'")
-    if ($Script:INCLUDE_DRIVERS) { $typeBits += "Type='Driver'" }
-    $typeExpr = '(' + ($typeBits -join ' or ') + ')'
-    return "IsInstalled=0 and IsHidden=0 and $typeExpr"
-}
-
 function New-WuaSession {
     $session = New-Object -ComObject Microsoft.Update.Session
     $session.ClientApplicationID = 'WinDeploy'
     return $session
 }
 
+function Get-ComExceptionHexHResult {
+    # Pulls the HResult from a caught exception and formats it the same way
+    # as Format-WUHResult so it matches WU_HRESULT_MEANINGS keys.
+    param([Parameter(Mandatory)]$ErrorRecord)
+    $hr = 0
+    try { $hr = [int]$ErrorRecord.Exception.HResult } catch { $hr = 0 }
+    return ('0x{0:X8}' -f $hr)
+}
+
+function Search-Updates {
+    <#
+    Runs a single WUA search with criteria-narrowing retry on
+    WU_E_INVALID_CRITERIA (0x80240032). Tries each entry of $CriteriaLadder
+    in order; first non-INVALID_CRITERIA result wins (success or any other
+    error). Returns @{ Updates; HResult; CriteriaUsed; Error }.
+    #>
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][int]$ServerSelection,
+        [string]$ServiceId,
+        [Parameter(Mandatory)][string[]]$CriteriaLadder,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $lastHex      = $Script:WU_E_INVALID_CRITERIA
+    $lastCriteria = $CriteriaLadder[-1]
+    $lastError    = "All narrowed criteria still returned WU_E_INVALID_CRITERIA"
+
+    foreach ($criteria in $CriteriaLadder) {
+        $lastCriteria = $criteria
+        try {
+            $searcher = $Session.CreateUpdateSearcher()
+            $searcher.ServerSelection = $ServerSelection
+            if ($ServiceId) {
+                $searcher.ServiceID = $ServiceId
+            }
+            Write-LogInfo "  [$Label] criteria: $criteria"
+            $result = $searcher.Search($criteria)
+            return @{
+                Updates      = $result.Updates
+                HResult      = '0x00000000'
+                CriteriaUsed = $criteria
+                Error        = $null
+            }
+        } catch {
+            $lastHex   = Get-ComExceptionHexHResult -ErrorRecord $_
+            $lastError = $_.Exception.Message
+            if ($lastHex -eq $Script:WU_E_INVALID_CRITERIA) {
+                Write-LogWarning "  [$Label] WU_E_INVALID_CRITERIA on '$criteria' - narrowing"
+                continue
+            }
+            Write-LogError "  [$Label] search failed ($lastHex): $lastError"
+            return @{
+                Updates      = $null
+                HResult      = $lastHex
+                CriteriaUsed = $criteria
+                Error        = $lastError
+            }
+        }
+    }
+    return @{
+        Updates      = $null
+        HResult      = $lastHex
+        CriteriaUsed = $lastCriteria
+        Error        = $lastError
+    }
+}
+
 function Get-PendingViaCOM {
     <#
-    Returns @{ Updates = IUpdateCollection; Count = int; Error = string? }.
-    On COM failure: @{ Updates = $null; Count = -1; Error = '...' }.
+    Issues up to two searches (Software via MU when enabled, Drivers via
+    default WU when INCLUDE_DRIVERS), merges deduped results, and applies
+    the IncludeOptional filter. Returns @{ Updates; Count; Error }.
+
+    On hard failure (software search broken): @{ Updates=$null; Count=-1; Error=... }.
+    Driver-search failure is non-fatal: warn + proceed with software-only.
     #>
     Write-LogInfo 'Scanning for updates via Windows Update Agent COM API...'
+
     try {
-        $session  = New-WuaSession
-        $searcher = $session.CreateUpdateSearcher()
-        if ($Script:INCLUDE_MS_UPDATE) {
-            $searcher.ServerSelection = 3  # ssOthers
-            $searcher.ServiceID       = $Script:MS_UPDATE_SERVICE_ID
-        }
-        $criteria = Get-WUSearchCriteria
-        Write-LogInfo "Search criteria: $criteria"
-
-        $result = $searcher.Search($criteria)
-        $rawUpdates = $result.Updates
-
-        if (-not $Script:INCLUDE_OPTIONAL) {
-            # Optional updates have AutoSelectOnWebSites=$false and are kept
-            # behind Settings -> Optional Updates. Filter them out when the
-            # operator has disabled IncludeOptional.
-            $filtered = New-Object -ComObject Microsoft.Update.UpdateColl
-            for ($i = 0; $i -lt $rawUpdates.Count; $i++) {
-                $u = $rawUpdates.Item($i)
-                if ($u.AutoSelectOnWebSites) { $null = $filtered.Add($u) }
-            }
-            $dropped = $rawUpdates.Count - $filtered.Count
-            if ($dropped -gt 0) {
-                Write-LogInfo "Filtered out $dropped optional update(s) (IncludeOptional=false)."
-            }
-            return @{ Updates = $filtered; Count = $filtered.Count; Error = $null }
-        }
-
-        return @{ Updates = $rawUpdates; Count = $rawUpdates.Count; Error = $null }
+        $session = New-WuaSession
     } catch {
-        return @{ Updates = $null; Count = -1; Error = $_.Exception.Message }
+        $hex = Get-ComExceptionHexHResult -ErrorRecord $_
+        return @{ Updates = $null; Count = -1; Error = "Could not create Microsoft.Update.Session ($hex): $($_.Exception.Message)" }
     }
+
+    $merged       = New-Object -ComObject Microsoft.Update.UpdateColl
+    $seen         = @{}
+    $criteriaUsed = @{}
+
+    # ---- Software search ----------------------------------------------------
+    if ($Script:INCLUDE_MS_UPDATE) {
+        $softSel   = $Script:SS_OTHERS
+        $softSvc   = $Script:MS_UPDATE_SERVICE_ID
+        $softLabel = 'Software via Microsoft Update'
+    } else {
+        $softSel   = $Script:SS_WINDOWS_UPDATE
+        $softSvc   = $null
+        $softLabel = 'Software via Windows Update'
+    }
+    $softLadder = @(
+        "IsInstalled=0 and IsHidden=0 and Type='Software'",
+        "IsInstalled=0 and IsHidden=0",
+        "IsInstalled=0"
+    )
+    $softRes = Search-Updates -Session $session -ServerSelection $softSel `
+        -ServiceId $softSvc -CriteriaLadder $softLadder -Label $softLabel
+
+    if (-not $softRes.Updates) {
+        Set-StageExtra -StageName $StageName -Key 'WindowsUpdate_ComScanHResult'  -Value $softRes.HResult
+        Set-StageExtra -StageName $StageName -Key 'WindowsUpdate_ComScanCriteria' -Value $softRes.CriteriaUsed
+        $msg = "$softLabel failed: $(Format-WUHResult ([int][Convert]::ToInt32($softRes.HResult.Substring(2), 16))) - $($softRes.Error)"
+        return @{ Updates = $null; Count = -1; Error = $msg }
+    }
+    $criteriaUsed['Software'] = $softRes.CriteriaUsed
+    for ($i = 0; $i -lt $softRes.Updates.Count; $i++) {
+        $u  = $softRes.Updates.Item($i)
+        $id = $u.Identity.UpdateID
+        if (-not $seen.ContainsKey($id)) {
+            $null = $merged.Add($u)
+            $seen[$id] = $true
+        }
+    }
+    Write-LogInfo "  [$softLabel] returned $($softRes.Updates.Count) update(s)."
+
+    # ---- Driver search ------------------------------------------------------
+    # MU service catalog rejects Type='Driver' with WU_E_INVALID_CRITERIA, so
+    # drivers always come from the default Windows Update service.
+    if ($Script:INCLUDE_DRIVERS) {
+        $drvLadder = @(
+            "IsInstalled=0 and IsHidden=0 and Type='Driver'",
+            "IsInstalled=0 and Type='Driver'"
+        )
+        $drvRes = Search-Updates -Session $session -ServerSelection $Script:SS_WINDOWS_UPDATE `
+            -ServiceId $null -CriteriaLadder $drvLadder -Label 'Drivers via Windows Update'
+
+        if ($drvRes.Updates) {
+            $criteriaUsed['Driver'] = $drvRes.CriteriaUsed
+            $added = 0
+            for ($i = 0; $i -lt $drvRes.Updates.Count; $i++) {
+                $u  = $drvRes.Updates.Item($i)
+                $id = $u.Identity.UpdateID
+                if (-not $seen.ContainsKey($id)) {
+                    $null = $merged.Add($u)
+                    $seen[$id] = $true
+                    $added++
+                }
+            }
+            Write-LogInfo "  [Drivers via Windows Update] returned $($drvRes.Updates.Count) update(s); $added newly merged."
+        } else {
+            Write-LogWarning "Driver search failed ($($drvRes.HResult)): $($drvRes.Error). Proceeding software-only; DCU runs after drain."
+            Set-StageExtra -StageName $StageName -Key 'WindowsUpdate_DriverScanHResult'  -Value $drvRes.HResult
+            Set-StageExtra -StageName $StageName -Key 'WindowsUpdate_DriverScanCriteria' -Value $drvRes.CriteriaUsed
+        }
+    }
+
+    Set-StageExtra -StageName $StageName -Key 'WindowsUpdate_ComScanCriteriaUsed' -Value $criteriaUsed
+
+    # ---- Optional filter ----------------------------------------------------
+    if (-not $Script:INCLUDE_OPTIONAL) {
+        $filtered = New-Object -ComObject Microsoft.Update.UpdateColl
+        for ($i = 0; $i -lt $merged.Count; $i++) {
+            $u = $merged.Item($i)
+            if ($u.AutoSelectOnWebSites) { $null = $filtered.Add($u) }
+        }
+        $dropped = $merged.Count - $filtered.Count
+        if ($dropped -gt 0) {
+            Write-LogInfo "Filtered out $dropped optional update(s) (IncludeOptional=false)."
+        }
+        return @{ Updates = $filtered; Count = $filtered.Count; Error = $null }
+    }
+
+    return @{ Updates = $merged; Count = $merged.Count; Error = $null }
 }
 
 function Install-ViaCOM {
@@ -350,67 +489,6 @@ function Install-ViaCOM {
 }
 
 # ---------------------------------------------------------------------------
-# PSWindowsUpdate fallback (only used if COM session cannot be created)
-# ---------------------------------------------------------------------------
-function Test-PSGalleryReachable {
-    $maxAttempts = 4
-    $delay = 3
-    for ($i = 1; $i -le $maxAttempts; $i++) {
-        try {
-            $resp = Invoke-WebRequest -Uri 'https://www.powershellgallery.com/api/v2' `
-                -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-            if ($resp.StatusCode -eq 200) { return $true }
-        } catch {
-            if ($i -lt $maxAttempts) {
-                Start-Sleep -Seconds $delay
-                $delay = [Math]::Min($delay * 2, 20)
-            }
-        }
-    }
-    return $false
-}
-
-function Invoke-PSWindowsUpdateFallback {
-    Write-LogWarning 'Falling back to PSWindowsUpdate path - COM API was unavailable.'
-    if (-not (Test-PSGalleryReachable)) {
-        return @{ Status = 'Failed'; Message = 'PSGallery unreachable for fallback path.' }
-    }
-    $nuget = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
-    if (-not $nuget -or $nuget.Version -lt $Script:NUGET_MIN_VERSION) {
-        Install-PackageProvider -Name NuGet -MinimumVersion $Script:NUGET_MIN_VERSION `
-            -Force -Scope AllUsers | Out-Null
-    }
-    $mod = Get-Module -ListAvailable -Name 'PSWindowsUpdate' |
-           Sort-Object Version -Descending | Select-Object -First 1
-    if (-not $mod) {
-        Install-Module -Name 'PSWindowsUpdate' -Force -Scope AllUsers `
-            -AllowClobber -SkipPublisherCheck | Out-Null
-    }
-    Import-Module 'PSWindowsUpdate' -Force
-
-    $wuArgs = @{
-        AcceptAll    = $true
-        AutoReboot   = $false
-        IgnoreReboot = $true
-        Confirm      = $false
-        NotTitle     = 'Preview'
-        ErrorAction  = 'Stop'
-    }
-    if ($Script:INCLUDE_MS_UPDATE) { $wuArgs['MicrosoftUpdate'] = $true }
-
-    try {
-        $result = Install-WindowsUpdate @wuArgs
-        $rebootReq = $result | Where-Object { $_.RebootRequired -eq $true }
-        if ($rebootReq -or (Test-RebootPending)) {
-            return @{ Status = 'RebootRequired'; Message = 'PSWindowsUpdate fallback: reboot required.' }
-        }
-        return @{ Status = 'Complete'; Message = 'PSWindowsUpdate fallback: drain complete.' }
-    } catch {
-        return @{ Status = 'Failed'; Message = "PSWindowsUpdate fallback failed: $($_.Exception.Message)" }
-    }
-}
-
-# ---------------------------------------------------------------------------
 # DCU sub-step wrapper - dot-sources DellCommandUpdate.ps1 and records extras
 # ---------------------------------------------------------------------------
 function Invoke-DcuSubStep {
@@ -470,12 +548,8 @@ try {
     $pending = Get-PendingViaCOM
     if ($pending.Count -lt 0) {
         Write-LogError "COM scan failed: $($pending.Error)"
-        Set-StageExtra -StageName $StageName -Key 'Engine' -Value 'PSWindowsUpdate-Fallback'
-        $fallback = Invoke-PSWindowsUpdateFallback
-        $finalStatus = 'SUCCESS'
-        if ($fallback.Status -eq 'Failed') { $finalStatus = 'FAILED' }
-        Close-Logger -FinalStatus $finalStatus
-        return $fallback
+        Close-Logger -FinalStatus 'FAILED'
+        return @{ Status = 'Failed'; Message = "WUA COM scan failed: $($pending.Error)" }
     }
     Set-StageExtra -StageName $StageName -Key 'PendingCountStart' -Value $pending.Count
     Write-LogInfo "COM scan found $($pending.Count) applicable update(s)."

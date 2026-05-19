@@ -86,9 +86,13 @@ Stages must **not** call `Restart-Computer` directly — return `RebootRequired`
 
 ## Stage pipeline order
 
-`TimeSync > PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > InstallRustDesk > InstallTailscale > RemoteAccess > WindowsUpdate > Cleanup`
+`TimeSync > PowerSettings > Debloat > WinTweaks > InstallDellSupportAssist > InstallDellPowerManager > ConfigureDellUpdates > InstallRustDesk > InstallTailscale > RemoteAccess > WindowsUpdate > Cleanup`
 
 `TimeSync` runs **first** because every downstream stage (TLS handshakes for winget, Windows Update token validation, code-signing checks, Tailscale auth) misbehaves with a skewed clock. On failure it returns `RebootRequired` (capped at `TimeSync_RebootRetryCount` < 2 via `StageExtras`) before giving up with `Failed`, so a fresh network stack gets a second chance. `TimeSync` is in both `REBOOT_ALLOWED_STAGES` and `DRAIN_STAGES` for this reason.
+
+`PowerSettings` activates the Ultimate Performance plan (falls back to High Performance on Home SKUs where duplication is blocked) and pins display-off / sleep / hibernate / lid-close / sleep-button / power-button to Never / Do-nothing on both AC and DC. Settings live under `Stages.PowerSettings` in `config/settings.json` (`PowerPlan`, `DisableButtons`, `DisableSleepAndScreenOff`, `DisableHibernateFile`).
+
+`ConfigureDellUpdates` runs after both Dell apps are installed but before `WindowsUpdate`. It applies best-effort SupportAssist auto-consent registry tweaks and registers a weekly SYSTEM-context `dcu-cli` sweep (default Sunday 03:00) so Dell BIOS/firmware/driver updates keep flowing after the one-shot deploy. The scheduled task reuses `Invoke-DellCommandUpdate` from [core/DellCommandUpdate.ps1](core/DellCommandUpdate.ps1) rather than re-implementing dcu-cli orchestration. Skips cleanly on non-Dell hardware. `ContinueOnError` defaults to true -- a failed SupportAssist registry write should never halt the deploy.
 
 `RemoteAccess` runs after `InstallTailscale` so WinRM TrustedHosts can be scoped to the Tailscale CGNAT (`100.*`), and before `WindowsUpdate` so the machine remains remotely debuggable across the long update phase.
 

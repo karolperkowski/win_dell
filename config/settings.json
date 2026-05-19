@@ -21,7 +21,7 @@
       "ContinueOnError": false,
       "MaxCycles": 8,
       "TimeoutMinutes": 240,
-      "_comment_Engine": "Primary engine = native Windows Update Agent COM API (Microsoft.Update.Session). PSWindowsUpdate is only used as a fallback if COM session creation fails.",
+      "_comment_Engine": "Engine = native Windows Update Agent COM API (Microsoft.Update.Session). Software searches go through the Microsoft Update service; drivers go through the default Windows Update service (MU rejects Type='Driver' with WU_E_INVALID_CRITERIA 0x80240032).",
       "IncludeMicrosoftUpdate": true,
       "IncludeDrivers": true,
       "IncludeOptional": true,
@@ -31,7 +31,15 @@
     },
     "PowerSettings": {
       "ContinueOnError": false,
-      "TimeoutMinutes": 60
+      "TimeoutMinutes": 60,
+      "_comment_PowerPlan": "Ultimate = duplicate the hidden Ultimate Performance template and activate it (falls back to High Performance if duplication is blocked, e.g. Home SKUs). High = activate the always-present High Performance plan directly.",
+      "PowerPlan": "Ultimate",
+      "_comment_Buttons": "When true, lid close / sleep button / power button are pinned to 'Do nothing' on AC and DC. Set false to keep Windows defaults.",
+      "DisableButtons": true,
+      "_comment_Sleep": "When true, display-off / sleep / hibernate timeouts are pinned to Never on AC and DC.",
+      "DisableSleepAndScreenOff": true,
+      "_comment_HiberFile": "When true, runs 'powercfg /hibernate off' to reclaim hiberfil.sys disk space.",
+      "DisableHibernateFile": true
     },
     "Debloat": {
       "ContinueOnError": true,
@@ -45,7 +53,9 @@
       "_comment_Timezone": "Timezone moved to Stages.TimeSync as of 2026-05-16. This key is ignored.",
       "DisplayScale": 100,
       "NumLockOnStartup": true,
-      "AppProfile": "Default"
+      "AppProfile": "Default",
+      "_comment_StartMenuAlign": "Windows 11 taskbar/Start alignment. 'Left' or 'Center'. Win10 ignores the key. Takes effect on next Explorer restart (Cleanup reboot covers it).",
+      "StartMenuAlign": "Left"
     },
     "InstallDellSupportAssist": {
       "ContinueOnError": true,
@@ -54,6 +64,15 @@
     "InstallDellPowerManager": {
       "ContinueOnError": true,
       "TimeoutMinutes": 60
+    },
+    "ConfigureDellUpdates": {
+      "_comment": "Runs after both Dell apps are installed. Configures SupportAssist for unattended auto-consent (best-effort registry tweaks) and registers a recurring SYSTEM-context dcu-cli sweep so Dell BIOS/firmware/driver updates keep flowing after the one-shot deploy.",
+      "ContinueOnError": true,
+      "TimeoutMinutes": 30,
+      "ConfigureSupportAssist": true,
+      "RegisterWeeklyDcuTask": true,
+      "WeeklyDayOfWeek": "Sunday",
+      "WeeklyTime": "03:00"
     },
     "InstallRustDesk": {
       "ContinueOnError": true,

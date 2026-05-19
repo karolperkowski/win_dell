@@ -4,9 +4,21 @@
     WinDeploy Stage: Power Settings
 
 .DESCRIPTION
-    Configures power settings for always-on operation (display never off,
-    system never sleeps) when plugged in. Works on both Windows 10 and 11,
-    on laptops and desktops. Uses powercfg.exe for reliability.
+    Activates the Ultimate Performance power plan (or falls back to High
+    Performance if duplication is blocked on Home SKUs), then disables every
+    automatic display-off / sleep / hibernate behaviour and pins lid-close,
+    sleep-button, and power-button actions to "Do nothing" -- on BOTH AC
+    (plugged-in) and DC (battery). Works on Windows 10 and 11. Uses
+    powercfg.exe exclusively for portability.
+
+    Settings consumed from $Config['Stages']['PowerSettings']:
+        PowerPlan                  : 'Ultimate' | 'High' (default 'Ultimate')
+        DisableButtons             : bool (default $true)
+        DisableSleepAndScreenOff   : bool (default $true)
+        DisableHibernateFile       : bool (default $true)
+
+    Per the orchestrator return contract (see CLAUDE.md), this stage returns
+    exactly one hashtable: @{ Status; Message }.
 #>
 
 [CmdletBinding()]
@@ -17,41 +29,89 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ConfirmPreference   = 'None'   # Prevent any cmdlet from prompting during unattended run
+$ConfirmPreference   = 'None'
 
 $coreDir = $PSScriptRoot
 Import-Module (Join-Path $coreDir 'Logging.psm1') -DisableNameChecking -Force
+# State.psm1 is best-effort -- a fresh ad-hoc run outside the orchestrator
+# may not have a state file. Set-StageExtra calls are wrapped in try/catch.
+try {
+    Import-Module (Join-Path $coreDir 'State.psm1') -DisableNameChecking -Force
+} catch {
+    # Logger not initialised yet; defer the warning until after Initialize-Logger.
+    $Script:StateModuleLoadError = $_.Exception.Message
+}
 
 Initialize-Logger -Stage $StageName
 
-# ---------------------------------------------------------------------------
-# GUIDs: these are Windows-standard and stable across Win10/11
-# ---------------------------------------------------------------------------
+if ($Script:StateModuleLoadError) {
+    Write-LogWarning "State.psm1 unavailable: $($Script:StateModuleLoadError) -- StageExtras writes will be skipped."
+}
 
-# Sub-group and setting GUIDs
-$SUB_SLEEP          = '238c9fa8-0aad-41ed-83f4-97be242c8f20'   # Sleep sub-group
-$SUB_DISPLAY        = '7516b95f-f776-4464-8c53-06167f40cc99'   # Display sub-group
-$SETTING_STANDBY_AC = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'  # Sleep after (AC)
-$SETTING_DISPLAY_AC = '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'  # Display off after (AC)
-$SETTING_HIBERNATE  = '9d7815a6-7ee4-497e-8888-515a05f02364'  # Hibernate after (AC)
+# ---------------------------------------------------------------------------
+# Stable Windows GUIDs (Win10 + Win11)
+# ---------------------------------------------------------------------------
+$SUB_SLEEP        = '238c9fa8-0aad-41ed-83f4-97be242c8f20'   # Sleep
+$SUB_DISPLAY      = '7516b95f-f776-4464-8c53-06167f40cc99'   # Display
+$SUB_BUTTONS      = '4f971e89-eebd-4455-a8de-9e59040e7347'   # Power buttons and lid
 
-# Value 0 = Never
-$NEVER = 0
+$SETTING_STANDBY  = '29f6c1db-86da-48c5-9fdb-f2b67b1f44da'   # Sleep after
+$SETTING_DISPLAY  = '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'   # Display off after
+$SETTING_HIBER    = '9d7815a6-7ee4-497e-8888-515a05f02364'   # Hibernate after
+
+$SETTING_LID      = '5ca83367-6e45-459f-a27b-476b1d01c936'   # Lid close action
+$SETTING_SLEEPBTN = '96996bc0-ad50-47ec-923b-6f41874dd9eb'   # Sleep button action
+$SETTING_PWRBTN   = '7648efa3-dd9c-4e3e-b566-50f929386280'   # Power button action
+
+# Standard plan GUIDs (always present, no duplication required for these two)
+$PLAN_HIGH_PERF   = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'   # High Performance
+$PLAN_ULTIMATE    = 'e9a42b02-d5df-448d-aa00-03f14749eb61'   # Ultimate Performance template
+
+$NEVER     = 0   # Sleep/Display/Hibernate "after" value: 0 minutes = Never
+$DO_NOTHING = 0  # Lid/Sleep/Power button action: 0 = Do nothing
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+function Invoke-Powercfg {
+    <#
+    Runs powercfg.exe with the supplied arguments. Captures stdout+stderr into
+    a local array so nothing leaks into the stage's return pipeline (CLAUDE.md
+    "single biggest footgun" rule). Returns @{ ExitCode; Output }.
+    #>
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $captured = @(& powercfg.exe @Arguments 2>&1)
+    $exit = $LASTEXITCODE
+    return @{ ExitCode = $exit; Output = $captured }
+}
+
+function Set-StageExtraSafe {
+    param([string]$Key, $Value)
+    try {
+        if (Get-Command Set-StageExtra -ErrorAction SilentlyContinue) {
+            Set-StageExtra -StageName $StageName -Key $Key -Value $Value
+        }
+    } catch {
+        Write-LogWarning "  Could not write StageExtras[$Key]: $($_.Exception.Message)"
+    }
+}
+
 function Get-ActivePowerSchemeGuid {
-    $output = & powercfg.exe /getactivescheme
-    # Output: "Power Scheme GUID: xxxxxxxx-xxxx-... (Name)"
-    if ($output -match 'GUID:\s+([0-9a-f-]{36})') {
+    $r = Invoke-Powercfg -Arguments @('/getactivescheme')
+    $joined = ($r.Output -join "`n")
+    if ($joined -match 'GUID:\s+([0-9a-f-]{36})') {
         return $Matches[1]
     }
-    throw "Could not parse active power scheme GUID from: $output"
+    throw "Could not parse active power scheme GUID from: $joined"
 }
 
 function Set-PowerValue {
+    <#
+    Applies the same value to both AC and DC for a single setting.
+    The setting GUID is identical for AC and DC; only the verb differs.
+    #>
     param(
         [string]$SchemeGuid,
         [string]$SubGroupGuid,
@@ -59,35 +119,91 @@ function Set-PowerValue {
         [int]$Value,
         [string]$Description
     )
-    Write-LogInfo "  Setting: $Description => $Value"
-    & powercfg.exe /setacvalueindex $SchemeGuid $SubGroupGuid $SettingGuid $Value
-    if ($LASTEXITCODE -ne 0) {
-        Write-LogWarning "  powercfg returned exit code $LASTEXITCODE for: $Description"
+    Write-LogInfo "  $Description (AC+DC) => $Value"
+    $rAc = Invoke-Powercfg -Arguments @('/setacvalueindex', $SchemeGuid, $SubGroupGuid, $SettingGuid, "$Value")
+    $rDc = Invoke-Powercfg -Arguments @('/setdcvalueindex', $SchemeGuid, $SubGroupGuid, $SettingGuid, "$Value")
+    if ($rAc.ExitCode -ne 0) {
+        Write-LogWarning "    powercfg /setacvalueindex exit $($rAc.ExitCode) for $Description"
+    }
+    if ($rDc.ExitCode -ne 0) {
+        Write-LogWarning "    powercfg /setdcvalueindex exit $($rDc.ExitCode) for $Description"
     }
 }
 
-function Apply-ActiveScheme {
-    param([string]$SchemeGuid)
-    & powercfg.exe /setactive $SchemeGuid | Out-Null
+function Activate-BestPerformancePlan {
+    <#
+    Tries to duplicate the Ultimate Performance template and activate the
+    duplicate. On failure (Home SKUs commonly block this with 0x8007007A or
+    a "scheme not found" error), falls back to the always-present High
+    Performance plan.
+
+    Returns @{ Guid; Label } describing the plan that ended up active.
+    #>
+    param([string]$Requested = 'Ultimate')
+
+    if ($Requested -eq 'High') {
+        Write-LogInfo 'PowerPlan=High requested -- activating High Performance directly.'
+        $rAct = Invoke-Powercfg -Arguments @('/setactive', $PLAN_HIGH_PERF)
+        if ($rAct.ExitCode -ne 0) {
+            Write-LogWarning "powercfg /setactive High Performance exit $($rAct.ExitCode): $($rAct.Output -join '; ')"
+        }
+        return @{ Guid = $PLAN_HIGH_PERF; Label = 'High Performance' }
+    }
+
+    Write-LogInfo 'Attempting to duplicate the Ultimate Performance plan...'
+    $r = Invoke-Powercfg -Arguments @('-duplicatescheme', $PLAN_ULTIMATE)
+    $joined = ($r.Output -join "`n")
+    Write-LogInfo "  powercfg -duplicatescheme exit $($r.ExitCode)"
+
+    if ($r.ExitCode -eq 0 -and $joined -match 'GUID:\s+([0-9a-f-]{36})') {
+        $newGuid = $Matches[1]
+        Write-LogSuccess "  Duplicated Ultimate Performance as $newGuid"
+        $rAct = Invoke-Powercfg -Arguments @('/setactive', $newGuid)
+        if ($rAct.ExitCode -ne 0) {
+            Write-LogWarning "  /setactive on new Ultimate GUID exit $($rAct.ExitCode) -- falling back to High Performance."
+            Invoke-Powercfg -Arguments @('/setactive', $PLAN_HIGH_PERF) | Out-Null
+            return @{ Guid = $PLAN_HIGH_PERF; Label = 'High Performance (fallback after activate failure)' }
+        }
+        return @{ Guid = $newGuid; Label = 'Ultimate Performance' }
+    }
+
+    # Ultimate template not present (Home SKU) or duplication blocked.
+    Write-LogWarning "  Ultimate Performance not available (output: $joined). Falling back to High Performance."
+    $rAct = Invoke-Powercfg -Arguments @('/setactive', $PLAN_HIGH_PERF)
+    if ($rAct.ExitCode -ne 0) {
+        Write-LogWarning "  /setactive High Performance exit $($rAct.ExitCode)."
+    }
+    return @{ Guid = $PLAN_HIGH_PERF; Label = 'High Performance' }
 }
 
 function Verify-PowerSettings {
     param([string]$SchemeGuid)
 
-    Write-LogInfo 'Verifying power settings...'
-    $output = & powercfg.exe /query $SchemeGuid $SUB_SLEEP $SETTING_STANDBY_AC
-    $output += & powercfg.exe /query $SchemeGuid $SUB_DISPLAY $SETTING_DISPLAY_AC
+    Write-LogInfo 'Verifying power settings (AC + DC)...'
+    $subgroups = @($SUB_SLEEP, $SUB_DISPLAY, $SUB_BUTTONS)
+    $combined  = ''
+    foreach ($sub in $subgroups) {
+        $r = Invoke-Powercfg -Arguments @('/query', $SchemeGuid, $sub)
+        $combined += "`n" + ($r.Output -join "`n")
+    }
 
-    # Look for "Current AC Power Setting Index: 0x00000000" lines
-    $lines  = $output -join "`n"
-    $acVals = [regex]::Matches($lines, 'Current AC Power Setting Index:\s+0x([0-9a-fA-F]+)')
-    foreach ($m in $acVals) {
-        $val = [Convert]::ToInt32($m.Groups[1].Value, 16)
-        if ($val -ne 0) {
-            Write-LogWarning "  A setting is not 0 (Never) - value: $val"
+    $nonZero = 0
+    foreach ($verb in @('AC','DC')) {
+        $rx = [regex]::Matches($combined, "Current $verb Power Setting Index:\s+0x([0-9a-fA-F]+)")
+        foreach ($m in $rx) {
+            $val = [Convert]::ToInt32($m.Groups[1].Value, 16)
+            if ($val -ne 0) {
+                $nonZero++
+                Write-LogWarning "  Non-zero $verb value detected: $val"
+            }
         }
     }
-    Write-LogInfo 'Verification complete.'
+    if ($nonZero -eq 0) {
+        Write-LogSuccess '  All measured AC + DC indices are 0 (Never / Do nothing).'
+    } else {
+        Write-LogWarning "  $nonZero setting(s) are not zero -- see warnings above."
+    }
+    return $nonZero
 }
 
 # ---------------------------------------------------------------------------
@@ -97,46 +213,92 @@ function Verify-PowerSettings {
 try {
     Write-LogInfo "Stage '$StageName' starting."
 
-    $schemeGuid = Get-ActivePowerSchemeGuid
-    Write-LogInfo "Active power scheme GUID: $schemeGuid"
+    # Resolve stage config (the orchestrator passes the entire settings.json
+    # hashtable; per-stage settings live under .Stages.<StageName>).
+    $stageCfg = @{}
+    if ($Config -and $Config['Stages'] -and $Config['Stages'][$StageName]) {
+        $stageCfg = $Config['Stages'][$StageName]
+    }
 
-    Write-LogInfo 'Applying AC (plugged-in) power settings...'
+    $requestedPlan = 'Ultimate'
+    if ($stageCfg['PowerPlan']) { $requestedPlan = [string]$stageCfg['PowerPlan'] }
 
-    # Display: never turn off
-    Set-PowerValue -SchemeGuid $schemeGuid `
-                   -SubGroupGuid $SUB_DISPLAY `
-                   -SettingGuid $SETTING_DISPLAY_AC `
-                   -Value $NEVER `
-                   -Description 'Turn off display after (AC)'
+    $disableButtons = $true
+    if ($stageCfg.ContainsKey('DisableButtons')) {
+        $disableButtons = [bool]$stageCfg['DisableButtons']
+    }
 
-    # Standby/sleep: never
-    Set-PowerValue -SchemeGuid $schemeGuid `
-                   -SubGroupGuid $SUB_SLEEP `
-                   -SettingGuid $SETTING_STANDBY_AC `
-                   -Value $NEVER `
-                   -Description 'Sleep after (AC)'
+    $disableSleep = $true
+    if ($stageCfg.ContainsKey('DisableSleepAndScreenOff')) {
+        $disableSleep = [bool]$stageCfg['DisableSleepAndScreenOff']
+    }
 
-    # Hibernate: never
-    Set-PowerValue -SchemeGuid $schemeGuid `
-                   -SubGroupGuid $SUB_SLEEP `
-                   -SettingGuid $SETTING_HIBERNATE `
-                   -Value $NEVER `
-                   -Description 'Hibernate after (AC)'
+    $disableHiberFile = $true
+    if ($stageCfg.ContainsKey('DisableHibernateFile')) {
+        $disableHiberFile = [bool]$stageCfg['DisableHibernateFile']
+    }
 
-    # Apply the scheme to make changes active
-    Apply-ActiveScheme -SchemeGuid $schemeGuid
-    Write-LogSuccess 'Power scheme applied.'
+    # --- Plan selection -----------------------------------------------------
+    $plan = Activate-BestPerformancePlan -Requested $requestedPlan
+    Write-LogSuccess "Active plan: $($plan.Label) -- $($plan.Guid)"
+    Set-StageExtraSafe -Key 'SchemeGuid'  -Value $plan.Guid
+    Set-StageExtraSafe -Key 'SchemeLabel' -Value $plan.Label
 
-    # Also disable hibernate file to reclaim disk space (optional - comment out if you want hibernate)
-    Write-LogInfo 'Disabling hibernation (hiberfil.sys)...'
-    & powercfg.exe /hibernate off | Out-Null
+    # Pick up the actually-active scheme (may differ if /setactive failed).
+    $activeGuid = Get-ActivePowerSchemeGuid
+    Write-LogInfo "Active power scheme GUID (confirmed): $activeGuid"
 
-    # Verify
-    Verify-PowerSettings -SchemeGuid $schemeGuid
+    # --- Sleep / display / hibernate (AC + DC) -----------------------------
+    if ($disableSleep) {
+        Write-LogInfo 'Disabling display-off / sleep / hibernate on AC and DC...'
+        Set-PowerValue -SchemeGuid $activeGuid -SubGroupGuid $SUB_DISPLAY `
+                       -SettingGuid $SETTING_DISPLAY -Value $NEVER `
+                       -Description 'Turn off display after'
+        Set-PowerValue -SchemeGuid $activeGuid -SubGroupGuid $SUB_SLEEP `
+                       -SettingGuid $SETTING_STANDBY -Value $NEVER `
+                       -Description 'Sleep after'
+        Set-PowerValue -SchemeGuid $activeGuid -SubGroupGuid $SUB_SLEEP `
+                       -SettingGuid $SETTING_HIBER -Value $NEVER `
+                       -Description 'Hibernate after'
+    } else {
+        Write-LogInfo 'DisableSleepAndScreenOff=false -- leaving sleep/display/hibernate values untouched.'
+    }
 
-    Write-LogSuccess 'Power settings stage complete.'
+    # --- Buttons (AC + DC) -------------------------------------------------
+    if ($disableButtons) {
+        Write-LogInfo 'Setting lid / sleep button / power button to "Do nothing" on AC and DC...'
+        Set-PowerValue -SchemeGuid $activeGuid -SubGroupGuid $SUB_BUTTONS `
+                       -SettingGuid $SETTING_LID -Value $DO_NOTHING `
+                       -Description 'Lid close action'
+        Set-PowerValue -SchemeGuid $activeGuid -SubGroupGuid $SUB_BUTTONS `
+                       -SettingGuid $SETTING_SLEEPBTN -Value $DO_NOTHING `
+                       -Description 'Sleep button action'
+        Set-PowerValue -SchemeGuid $activeGuid -SubGroupGuid $SUB_BUTTONS `
+                       -SettingGuid $SETTING_PWRBTN -Value $DO_NOTHING `
+                       -Description 'Power button action'
+    } else {
+        Write-LogInfo 'DisableButtons=false -- leaving lid / sleep / power button actions untouched.'
+    }
+
+    # --- Commit the scheme so values become effective immediately ---------
+    Invoke-Powercfg -Arguments @('/setactive', $activeGuid) | Out-Null
+    Write-LogSuccess 'Power scheme committed.'
+
+    # --- Hibernate file (reclaims disk space) -----------------------------
+    if ($disableHiberFile) {
+        Write-LogInfo 'Disabling hibernation file (hiberfil.sys)...'
+        Invoke-Powercfg -Arguments @('/hibernate', 'off') | Out-Null
+    } else {
+        Write-LogInfo 'DisableHibernateFile=false -- leaving hiberfil.sys in place.'
+    }
+
+    # --- Verify ------------------------------------------------------------
+    $nonZero = Verify-PowerSettings -SchemeGuid $activeGuid
+    Set-StageExtraSafe -Key 'VerifiedNonZeroCount' -Value $nonZero
+
+    Write-LogSuccess "Power settings stage complete. Plan: $($plan.Label)."
     Close-Logger -FinalStatus 'SUCCESS'
-    return @{ Status = 'Complete'; Message = 'Power settings configured.' }
+    return @{ Status = 'Complete'; Message = "Power settings configured (plan: $($plan.Label))." }
 
 } catch {
     Write-LogError "Power settings stage failed: $($_.Exception.Message)"

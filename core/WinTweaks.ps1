@@ -544,6 +544,30 @@ function Set-DarkTheme {
     }
 }
 
+function Set-StartMenuAlignment {
+    # Windows 11 taskbar/Start alignment. TaskbarAl: 0 = Left, 1 = Center.
+    # Windows 10 ignores the value silently -- safe to write on either OS.
+    # Effect appears after the next Explorer restart; the orchestrator's
+    # final Cleanup reboot covers that.
+    $mode = 'Left'
+    if ($Config['Stages'] -and $Config['Stages']['WinTweaks'] -and `
+        $Config['Stages']['WinTweaks']['StartMenuAlign']) {
+        $mode = [string]$Config['Stages']['WinTweaks']['StartMenuAlign']
+    }
+    $val = 0
+    if ($mode -eq 'Center') { $val = 1 }
+
+    Write-LogSection "Start menu alignment: $mode"
+    foreach ($root in (Get-AllUserRoots)) {
+        Set-Reg "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" 'TaskbarAl' $val 'DWord'
+    }
+    try {
+        Set-StageExtra -StageName $StageName -Key 'StartMenuAlign' -Value $mode
+    } catch {
+        Write-LogWarning "Could not write StartMenuAlign StageExtras: $($_.Exception.Message)"
+    }
+}
+
 function Remove-BingSearch {
     Write-LogSection 'Remove Bing Search'
     # Policy: machine-wide
@@ -718,6 +742,7 @@ try {
 
         Write-LogSection 'Pass 2: Direct registry tweaks'
         Set-DarkTheme
+        Set-StartMenuAlignment
         Remove-BingSearch
         Set-NumLockOn
         Set-VerboseLogin

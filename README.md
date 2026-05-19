@@ -56,18 +56,25 @@ irm ... | iex
 Stage pipeline:
   1. TimeSync                   timezone, w32time service, NTP peers, force
                                 resync with poll; reboot-retry fallback (cap 2)
-  2. PowerSettings              display/sleep never (AC power)
+  2. PowerSettings              activates Ultimate Performance plan (falls back
+                                to High Performance on Home SKUs), pins display
+                                /sleep/hibernate to Never AND lid/sleep/power
+                                buttons to Do-nothing on both AC and DC
   3. Debloat                    removes bloatware per data/bloatware.json
-  4. WinTweaks                  WinUtil preset + dark theme + Chrome + display
-                                scale 100% + NumLock on + Bing off + verbose
-                                login + telemetry off + more
+  4. WinTweaks                  WinUtil preset + dark theme + Start menu left
+                                aligned + Chrome + display scale 100% + NumLock
+                                on + Bing off + verbose login + telemetry off
   5. InstallDellSupportAssist
   6. InstallDellPowerManager
-  7. InstallRustDesk            via WINGET_MANIFEST (pinned vendor URL + SHA256)
-  8. InstallTailscale           dual-condition wait: URL OR registration OR timeout
-  9. RemoteAccess               RDP + WinRM (TrustedHosts=100.*) + OpenSSH
- 10. WindowsUpdate              installs all updates, reboots as needed
- 11. Cleanup                    removes tasks, disables auto-logon, final reboot
+  7. ConfigureDellUpdates       SupportAssist auto-consent + weekly SYSTEM-
+                                context dcu-cli sweep (BIOS / firmware / drivers
+                                / Dell software) so updates keep flowing after
+                                the deploy is done. Skips on non-Dell hardware.
+  8. InstallRustDesk            via WINGET_MANIFEST (pinned vendor URL + SHA256)
+  9. InstallTailscale           dual-condition wait: URL OR registration OR timeout
+ 10. RemoteAccess               RDP + WinRM (TrustedHosts=100.*) + OpenSSH
+ 11. WindowsUpdate              installs all updates, reboots as needed
+ 12. Cleanup                    removes tasks, disables auto-logon, final reboot
 
 After each reboot: WinDeploy-Resume task fires → Orchestrator resumes
 After each logon:  WinDeploy-Monitor task fires → progress window reappears
@@ -101,15 +108,16 @@ win_dell/
 │   ├── Notify.ps1           tray notification on completion (self-removing)
 │   ├── Notify-Webhook.ps1   webhook notifications (Slack/Teams/etc.) for deploy events
 │   ├── TimeSync.ps1         stage 1 (timezone + w32time + NTP, reboot-retry capped)
-│   ├── PowerSettings.ps1    stage 2
+│   ├── PowerSettings.ps1    stage 2 (Ultimate Performance + AC/DC sleep/button lockdown)
 │   ├── Debloat.ps1          stage 3
-│   ├── WinTweaks.ps1        stage 4
-│   ├── AppInstall.ps1       stages 5-7 (Dell SupportAssist, Power Manager, RustDesk)
-│   ├── Tailscale.ps1        stage 8
-│   ├── RemoteAccess.ps1     stage 9 (RDP + WinRM + OpenSSH)
-│   ├── WindowsUpdate.ps1    stage 10 (drains via WUA COM + Dell Command|Update sweep)
-│   ├── DellCommandUpdate.ps1 helper invoked by WindowsUpdate for OEM BIOS/firmware/drivers
-│   └── Cleanup.ps1          stage 11
+│   ├── WinTweaks.ps1        stage 4 (incl. Start menu left alignment)
+│   ├── AppInstall.ps1       stages 5, 6, 8 (Dell SupportAssist, Power Manager, RustDesk)
+│   ├── ConfigureDellUpdates.ps1  stage 7 (SupportAssist auto-consent + weekly DCU task)
+│   ├── Tailscale.ps1        stage 9
+│   ├── RemoteAccess.ps1     stage 10 (RDP + WinRM + OpenSSH)
+│   ├── WindowsUpdate.ps1    stage 11 (drains via WUA COM + Dell Command|Update sweep)
+│   ├── DellCommandUpdate.ps1 helper invoked by WindowsUpdate + the weekly task for OEM BIOS/firmware/drivers
+│   └── Cleanup.ps1          stage 12
 │
 ├── config/
 │   ├── settings.json        all deployment configuration — edit this
@@ -135,6 +143,8 @@ win_dell/
 
 ## Scheduled tasks
 
+**Deploy-time operational tasks** (managed by `Resilience.psm1::Assert-ScheduledTasks`):
+
 | Task | Runs as | Window | Removed by |
 |---|---|---|---|
 | `WinDeploy-Resume` | SYSTEM | Hidden (launcher → `task_resume.log`) | Cleanup.ps1 |
@@ -145,7 +155,13 @@ win_dell/
 
 Resume and Notify run via generated launcher scripts that redirect all output to log files. Monitor runs directly — child processes cannot show WPF windows on the interactive desktop.
 
-**Self-healing:** Missing tasks are re-registered automatically on every bootstrap and orchestrator run. Re-running `irm ... | iex` fully restores everything.
+**Self-healing:** Missing operational tasks are re-registered automatically on every bootstrap and orchestrator run. Re-running `irm ... | iex` fully restores everything.
+
+**Post-deploy product tasks** (registered by a stage, NOT by `Resilience.psm1` — they survive uninstall on purpose):
+
+| Task | Registered by | Schedule | Purpose |
+|---|---|---|---|
+| `WinDeploy DCU Weekly Sweep` | `ConfigureDellUpdates` stage | Weekly (default: Sunday 03:00) | Dot-sources `core/DellCommandUpdate.ps1` and calls `Invoke-DellCommandUpdate` so Dell BIOS / firmware / driver / Dell-software updates keep flowing under SYSTEM long after the deploy is finished. `StartWhenAvailable` covers laptops that were off when the trigger fired. |
 
 ---
 
@@ -181,7 +197,16 @@ Edit `config/settings.json`:
 | `Stages.TimeSync.NetworkWaitSeconds` | `120` | How long to wait for `Resolve-DnsName` to succeed against an NTP peer before attempting the first resync. |
 | `Stages.TimeSync.VerifyTimeoutSeconds` | `120` | Total budget for the resync+poll loop (split across `ResyncAttempts`). |
 | `Stages.TimeSync.ResyncAttempts` | `5` | Number of `w32tm /resync /rediscover` calls; each is followed by a `/query /status` poll until Source flips off the local clock. |
-| `WinTweaks.RunWinUtil` | `true` | Run WinUtil Pass 1 (preset apply) before the direct registry tweaks in Pass 2. Set `false` to run only Pass 2. |
+| `Stages.PowerSettings.PowerPlan` | `"Ultimate"` | `"Ultimate"` = duplicate the hidden Ultimate Performance template via `powercfg -duplicatescheme` and activate it (falls back to High Performance if duplication is blocked on Home SKUs). `"High"` = activate the always-present High Performance plan directly. |
+| `Stages.PowerSettings.DisableButtons` | `true` | Pin lid close / sleep button / power button to "Do nothing" on AC and DC. |
+| `Stages.PowerSettings.DisableSleepAndScreenOff` | `true` | Pin display-off / sleep / hibernate timeouts to Never on AC and DC. |
+| `Stages.PowerSettings.DisableHibernateFile` | `true` | Run `powercfg /hibernate off` to reclaim `hiberfil.sys` disk space. |
+| `Stages.WinTweaks.RunWinUtil` | `true` | Run WinUtil Pass 1 (preset apply) before the direct registry tweaks in Pass 2. Set `false` to run only Pass 2. |
+| `Stages.WinTweaks.StartMenuAlign` | `"Left"` | Windows 11 taskbar/Start alignment. `"Left"` or `"Center"`. Win10 ignores it. Takes effect on next Explorer restart (Cleanup reboot covers it). |
+| `Stages.ConfigureDellUpdates.ConfigureSupportAssist` | `true` | Apply best-effort SupportAssist registry tweaks (AutoUpdate, scheduled scan frequency, telemetry/analytics consent). |
+| `Stages.ConfigureDellUpdates.RegisterWeeklyDcuTask` | `true` | Register `WinDeploy DCU Weekly Sweep` -- a SYSTEM-context scheduled task that calls `Invoke-DellCommandUpdate` once a week. |
+| `Stages.ConfigureDellUpdates.WeeklyDayOfWeek` | `"Sunday"` | Day the weekly DCU task runs. Any value `New-ScheduledTaskTrigger -DaysOfWeek` accepts. |
+| `Stages.ConfigureDellUpdates.WeeklyTime` | `"03:00"` | Time of day for the weekly DCU task. 24-hour `HH:mm`. |
 | `Tailscale.AuthKey` | `""` | Pre-auth key from `login.tailscale.com/admin/settings/keys`. When non-empty, registers via `--authkey` and skips the QR/browser flow. Recommended for unattended deploys. |
 | `Tailscale.QrTimeoutMinutes` | `30` | How long the QR registration wait loop runs before the stage gives up. |
 | `Debloat.RemoveOptional` | `false` | Remove only the `safe` bloatware list. Set `true` to also remove the `optional` list. |
@@ -194,6 +219,7 @@ Edit `config/settings.json`:
 | Tweak | Detail |
 |---|---|
 | Dark theme | HKLM + HKCU + Default user hive |
+| Start menu alignment | `TaskbarAl=0` (Left) per-user + default hive. Configurable via `Stages.WinTweaks.StartMenuAlign`. |
 | Display scale | Set to 100% (96 DPI) for current and default user |
 | NumLock on | Applied to current and default user hive |
 | Bing search removed | Start menu Bing search disabled |

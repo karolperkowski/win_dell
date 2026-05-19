@@ -28,7 +28,7 @@ The non-negotiables for contributing to `win_dell`. Full context in [CLAUDE.md](
 
 ## Tasks
 
-16. **All scheduled tasks are registered by `Resilience.psm1::Assert-ScheduledTasks`**. Single source of truth.
+16. **WinDeploy operational scheduled tasks** (Resume, Monitor, Notify, AutoLogonSafety, Watchdog) **are registered by `Resilience.psm1::Assert-ScheduledTasks`**. Single source of truth, self-healing across reboots. Stage-owned product tasks that should outlive the deploy (e.g. `WinDeploy DCU Weekly Sweep` registered by `ConfigureDellUpdates`) are the only exception; they belong to the stage that owns them and must not be added to `Resilience.psm1` (which would tie their lifecycle to the deploy task suite and re-register them on every bootstrap).
 17. **`-RepetitionInterval` requires `-RepetitionDuration`**, e.g. `-RepetitionDuration (New-TimeSpan -Days 9999)`. Without it the generated XML is missing `EndBoundary` and the task fails to register on Win 10/11.
 18. **`-LogonType Interactive` is incompatible with `-GroupId`.** Omit `-LogonType` for group-based principals.
 19. **The Watchdog rewrites `watchdog.ps1` every run** even when its scheduled task exists — to keep deployed machines on the current logic across upgrades.
