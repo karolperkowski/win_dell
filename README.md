@@ -313,6 +313,8 @@ D:\WinDeploy-Forensics\
 
 **Root-directory resolution**: D:\ if it exists and a sentinel file can be created (catches read-only CD-ROMs / locked USB drives); otherwise falls back to `C:\WinDeploy-Forensics\`. Override either via `-ForensicsRoot` on the CLI or `Forensics.Root` in `config/settings.json`.
 
+**Self-copy**: on every run the tool also copies itself to `<root>\bin\Collect-Forensics.ps1` so the tool stays colocated with its output (survives a C:\ reimage). The repo copy at `C:\ProgramData\WinDeploy\repo\tools\` remains the canonical entry point -- the `<root>\bin\` copy is a derivative artifact, refreshed on every invocation.
+
 **Redaction**: any JSON property whose name matches the `Forensics.RedactKeys` list (default: `AuthKey`, `Password`, `Secret`, `Token`, `ApiKey`, `PrivateKey`, `ConnectionString`) has its string value replaced with `"<redacted len=N>"` before the file is copied to the archive. Non-string values are left untouched.
 
 **manifest.json** is a single per-machine index file listing every run with its timestamp, reason, trigger, outcome (`success` / `partial` / `failure` / `in-progress`), version SHA, elapsed minutes, failed stages, and the path to its full run folder. Concurrent writers (manual run + Cleanup tail) are serialized via a `manifest.lock` sentinel file.

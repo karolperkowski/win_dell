@@ -693,6 +693,20 @@ Write-Host "  Root    : $root$fallbackTag"
 Write-Host "  RunDir  : $runDir"
 Write-Host ''
 
+# Stage a copy of this script under <root>\bin so the tool sits next to its
+# output. The repo copy at C:\ProgramData\WinDeploy\repo\tools\ remains the
+# canonical entry point; the <root>\bin copy is a refreshed-every-run
+# derivative that survives a C:\ reimage. Non-fatal -- a copy failure does
+# not abort the rest of the collection.
+Invoke-Step "self-copy to $($rootInfo.Root)\bin" {
+    $binDir = Join-Path $rootInfo.Root 'bin'
+    if (-not (Test-Path $binDir)) {
+        New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+    }
+    $dest = Join-Path $binDir 'Collect-Forensics.ps1'
+    Copy-Item -Path $PSCommandPath -Destination $dest -Force
+} | Out-Null
+
 # Collection steps (each step is non-fatal).
 Invoke-Step 'state.json'                  { Copy-StateFile          -RunDir $runDir } | Out-Null
 Invoke-Step 'logs/'                       { Copy-Logs               -RunDir $runDir } | Out-Null
