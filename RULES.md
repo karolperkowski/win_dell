@@ -35,7 +35,8 @@ The non-negotiables for contributing to `win_dell`. Full context in [CLAUDE.md](
 
 ## Troubleshooting
 
-20. **First move when stuck**: `tools\Troubleshoot.ps1 -Action Status` writes a forensic snapshot to `<LogDir>\auto-snapshot-<timestamp>.txt`. The same script auto-fires on every failure / abort / watchdog-detected stall.
+20. **First move when stuck**: `tools\Troubleshoot.ps1 -Action Status` writes a forensic snapshot to `<LogDir>\auto-snapshot-<timestamp>.txt`. The same script auto-fires on every failure / abort / watchdog-detected stall. For a *full* per-machine archive (state + logs + hardware + manifest), run `tools\Collect-Forensics.ps1`; it also fires automatically at the tail of `Cleanup.ps1` on every deploy.
+    - **Forensics root contract**: `tools\Collect-Forensics.ps1` writes to `D:\WinDeploy-Forensics\<hostname>\` when D:\ is writable (verified with a sentinel-file write, not just `Test-Path`), otherwise falls back to `C:\WinDeploy-Forensics\<hostname>\`. Collection failure is never fatal -- every step is wrapped in its own try/catch and the Cleanup-stage hook is wrapped again in an outer try so collection cannot promote a Cleanup failure. JSON files are redacted on the way in (`Forensics.RedactKeys` in settings.json).
 21. **Hot-patch a single file** without a full reinstall: `tools\Troubleshoot.ps1 -Action Repair -Stage <name>` (plugins ship for `TimeSync`, `InstallTailscale`, `WindowsUpdate`; add new stages by extending `$Script:StagePlugins`).
 22. **Refresh deployed code** = re-run the `install.ps1` one-liner. `bootstrap.ps1` alone does NOT pull from GitHub — it re-uses the extracted repo. `install.ps1` writes a `VERSION` stamp; `bootstrap.ps1` warns when VERSION is >7 days old.
 

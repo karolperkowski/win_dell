@@ -112,6 +112,39 @@ try {
     # Write completion report
     Write-CompletionReport
 
+    # --- Forensics collection (always last; never fatal) ----------------
+    # Bundles state, logs, hardware, daemon state into a per-machine archive
+    # on D:\ (falls back to C:\) and appends a run entry to manifest.json.
+    # Collection failure must never promote a Cleanup failure -- the call is
+    # wrapped in its own try/catch.
+    $runForensics = $true
+    if ($Config['Stages'] -and $Config['Stages']['Cleanup'] -and `
+        $Config['Stages']['Cleanup'].ContainsKey('RunForensics')) {
+        $runForensics = [bool]$Config['Stages']['Cleanup']['RunForensics']
+    }
+    if ($runForensics) {
+        try {
+            $forensicsScript = Join-Path (Split-Path $coreDir -Parent) 'tools\Collect-Forensics.ps1'
+            if (Test-Path $forensicsScript) {
+                Write-LogInfo "Running forensics collection: $forensicsScript"
+                $captured = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $forensicsScript `
+                    -Reason 'cleanup' -Trigger 'cleanup-stage-tail' 2>&1)
+                foreach ($l in $captured) {
+                    if ($null -ne $l) {
+                        $s = "$l".Trim()
+                        if ($s) { Write-LogInfo "  forensics: $s" }
+                    }
+                }
+            } else {
+                Write-LogWarning "Forensics script missing at $forensicsScript -- skipped."
+            }
+        } catch {
+            Write-LogWarning "Forensics collection threw: $($_.Exception.Message). Continuing."
+        }
+    } else {
+        Write-LogInfo 'Forensics collection disabled (Stages.Cleanup.RunForensics=false).'
+    }
+
     # Final reboot (optional - set FinalReboot = false in config to skip)
     $finalReboot = if ($Config['Cleanup'] -and $Config['Cleanup']['FinalReboot'] -eq $false) {
         $false

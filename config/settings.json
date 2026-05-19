@@ -90,8 +90,19 @@
     },
     "Cleanup": {
       "FinalReboot": true,
-      "TimeoutMinutes": 60
+      "TimeoutMinutes": 60,
+      "_comment_Forensics": "When true, Cleanup.ps1 runs tools/Collect-Forensics.ps1 at its tail so every deploy leaves a dated archive folder + manifest entry under <ForensicsRoot>\\<hostname>\\. Failure is never fatal.",
+      "RunForensics": true
     }
+  },
+
+  "Forensics": {
+    "_comment_Root": "Override the forensics archive root. Leave null to auto-detect (D:\\WinDeploy-Forensics if D:\\ is writable, else C:\\WinDeploy-Forensics). The tool consults this only when -ForensicsRoot is not passed on the CLI.",
+    "Root": null,
+    "_comment_AutoZip": "When true, also produce a .zip alongside each run folder for easy handoff.",
+    "AutoZip": false,
+    "_comment_RedactKeys": "JSON property names whose string values are replaced with '<redacted len=N>' before files are copied. Case-insensitive.",
+    "RedactKeys": ["AuthKey","Password","Secret","Token","ApiKey","PrivateKey","ConnectionString"]
   },
 
   "Debloat": {

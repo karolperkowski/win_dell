@@ -124,6 +124,14 @@ When `--source winget` still cannot get a package through (corporate proxy inter
 
 ---
 
+## Forensics collection (`tools/Collect-Forensics.ps1`)
+
+Bundles state.json, log directory, hardware/BIOS/OS facts, tool versions, scheduled-task state, powercfg dumps, recent system event-log errors, and a Troubleshoot.ps1 Status snapshot into a per-run subfolder under `<ForensicsRoot>\<hostname>\runs\<yyyyMMdd-HHmmss>-<reason>\` and appends a row to `<ForensicsRoot>\<hostname>\manifest.json`. Root resolution is `-ForensicsRoot` > `Forensics.Root` in [config/settings.json](config/settings.json) > `D:\WinDeploy-Forensics` (when D:\ is writable; we test with a sentinel-file write, not just `Test-Path`) > `C:\WinDeploy-Forensics`. JSON files are redacted on the way in (config-driven key list, default covers `AuthKey`/`Password`/`Secret`/`Token`/`ApiKey`/`PrivateKey`/`ConnectionString`). [core/Cleanup.ps1](core/Cleanup.ps1) invokes the tool at its tail, wrapped in its own try/catch so collection failure can never promote a Cleanup failure. The same script is runnable on-demand from a console. Disable the auto-run via `Stages.Cleanup.RunForensics = false`.
+
+When adding a new artifact to collect: add a `Save-*` / `Copy-*` function and an `Invoke-Step` line in the main block of [tools/Collect-Forensics.ps1](tools/Collect-Forensics.ps1). Each step must be independently fatal-safe -- a missing file or a non-Dell machine is a WARN, never a throw.
+
+---
+
 ## Troubleshooting (`tools/Troubleshoot.ps1`)
 
 Single entry point for diagnostics and recovery. Three actions:

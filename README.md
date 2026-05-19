@@ -132,6 +132,7 @@ win_dell/
 │
 ├── tools/
 │   ├── Troubleshoot.ps1     Status / Diagnose / Repair entry point (manual + auto-fired)
+│   ├── Collect-Forensics.ps1  Per-machine archive collector (D:\ -> C:\ fallback) + manifest.json
 │   ├── Update-Index.ps1     regenerates INDEX.md (called by pre-commit hook)
 │   └── Get-WingetManifestFields.ps1  computes WINGET_MANIFEST hash for a vendor URL
 │
@@ -276,6 +277,47 @@ Manifest signing uses GPG. See `docs/GPG-SETUP.md`. GPG is currently configured 
 | Machine wall clock wrong by the timezone offset on first boot | Old WinTweaks set `RealTimeIsUniversal=1`, making Windows interpret the BIOS clock (local time on Dells) as UTC | Fixed: registry value removed in WinTweaks; TimeSync clears any leftover value on every run |
 | `TimeSync` returns `Failed` with `Source='Local CMOS Clock'` | `w32tm /resync` returns when the request is dispatched, not after the sync completes; verification ran too early | Fixed: TimeSync now polls `/query /status` for up to `VerifyTimeoutSeconds`, retries `ResyncAttempts` times, and falls back to `RebootRequired` (capped at `MaxRebootRetries`) for a fresh network stack |
 | `TimeSync` succeeds but the clock never moves on a machine with a dead CMOS battery | Default `MaxPosPhaseCorrection` / `MaxNegPhaseCorrection` is 15h, so a multi-year skew is silently refused | Fixed: TimeSync sets both to `0xFFFFFFFF` (no limit) and restarts `w32time` before the first resync |
+
+---
+
+## Forensics collection
+
+Every deploy automatically bundles its own forensic record at the tail of the `Cleanup` stage by invoking [tools/Collect-Forensics.ps1](tools/Collect-Forensics.ps1). The same script can be run manually any time:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\ProgramData\WinDeploy\repo\tools\Collect-Forensics.ps1 -Reason 'post-incident-check'
+```
+
+**Output layout** (per machine, on D:\ when writable, else C:\):
+
+```text
+D:\WinDeploy-Forensics\
+  <hostname>\
+    manifest.json                       <-- grows with every run
+    runs\
+      20260519-134500-cleanup\          <-- one folder per run
+        state.json
+        tailscale.json                  (redacted: AuthKey etc.)
+        tailscale-live.json
+        VERSION
+        settings.json                   (redacted copy)
+        hardware.json                   (manufacturer/model/serial/BIOS/OS)
+        tools-versions.txt              (winget/tailscale/dcu-cli)
+        powercfg-active.txt + powercfg-query.txt
+        scheduled-tasks.txt             (WinDeploy-* + DCU Weekly Sweep)
+        system-errors.txt               (50 most recent ERROR/CRITICAL events)
+        auto-snapshot-*.txt             (from Troubleshoot.ps1 -Action Status)
+        run-summary.json                (machine-readable single-run summary)
+        logs\                           (full copy of $WD.LogDir)
+```
+
+**Root-directory resolution**: D:\ if it exists and a sentinel file can be created (catches read-only CD-ROMs / locked USB drives); otherwise falls back to `C:\WinDeploy-Forensics\`. Override either via `-ForensicsRoot` on the CLI or `Forensics.Root` in `config/settings.json`.
+
+**Redaction**: any JSON property whose name matches the `Forensics.RedactKeys` list (default: `AuthKey`, `Password`, `Secret`, `Token`, `ApiKey`, `PrivateKey`, `ConnectionString`) has its string value replaced with `"<redacted len=N>"` before the file is copied to the archive. Non-string values are left untouched.
+
+**manifest.json** is a single per-machine index file listing every run with its timestamp, reason, trigger, outcome (`success` / `partial` / `failure` / `in-progress`), version SHA, elapsed minutes, failed stages, and the path to its full run folder. Concurrent writers (manual run + Cleanup tail) are serialized via a `manifest.lock` sentinel file.
+
+Disable the Cleanup-stage auto-run by setting `Stages.Cleanup.RunForensics = false` in `config/settings.json`. The manual CLI invocation always works regardless.
 
 ---
 
